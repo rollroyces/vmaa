@@ -1,0 +1,29 @@
+📊 VMAA Pipeline Report
+🕐 2026-04-30 04:19:03
+Market: ✅ BULL | Vol: LOW | SPY: $711.58
+Candidates: 3 | Decisions: 3 | Executed: 3 | Skipped: 0
+
+🥇 RVTY — BUY
+   Conf 72% · Size $79,973 (8%) · Risk $62,500 · R:R 1:3.5
+   Entry $88.27 · Stop $81.12
+   TP: $101.51 (30%) / $110.34 (30%) / $123.58 (40%)
+   ⚠️  Position capped at max
+
+🥈 EPAM — BUY
+   Conf 86% · Size $79,931 (8%) · Risk $62,500 · R:R 1:11.3
+   Entry $111.48 · Stop $108.71
+   TP: $128.20 (30%) / $139.35 (30%) / $156.07 (40%)
+   ⚠️  Position capped at max · IR_sensitive
+
+🥉 MOS — BUY
+   Conf 69% · Size $79,998 (8%) · Risk $62,500 · R:R 1:11.4
+   Entry $22.85 · Stop $22.29
+   TP: $26.28 (30%) / $28.56 (30%) / $31.99 (40%)
+   ⚠️  Position capped at max
+
+💼 $239,902 deployed · R:R weighted avg
+
+⚙️ Entry: 52w-low + 0.5% · Stop: ATR 2x / Hard 10% / Structural
+⚙️ Exit: 3-tier TP + 8% trailing + 60d time stop
+⚙️ Size: Quarter-Kelly capped at $80K
+⚙️ Mode: DRY_RUN

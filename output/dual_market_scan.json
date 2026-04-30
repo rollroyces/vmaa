@@ -1,0 +1,155 @@
+{
+  "timestamp": "2026-04-30 01:00:48.500194",
+  "market": {
+    "spy_price": 711.5800170898438,
+    "spy_ma50": 678.0324096679688,
+    "above_ma50": true,
+    "volatility_20d": 0.1186,
+    "vol_regime": "LOW",
+    "dd_from_3mo_high": -0.0057,
+    "market_ok": true,
+    "position_scalar": 1.0
+  },
+  "scan": {
+    "total_scanned": 113,
+    "candidates_found": 3,
+    "us_candidates": 3,
+    "hk_candidates": 0
+  },
+  "candidates": [
+    {
+      "ticker": "RVTY",
+      "name": "Revvity, Inc.",
+      "sector": "Healthcare",
+      "current_price": 82.26,
+      "low_52w": 81.22,
+      "ptl_ratio": 1.0128,
+      "magna_score": 7,
+      "btm_ratio": 0.785,
+      "fcf_yield": 0.0569,
+      "roe": 0.0322,
+      "market_cap": 9196942336
+    },
+    {
+      "ticker": "EPAM",
+      "name": "EPAM Systems, Inc.",
+      "sector": "Technology",
+      "current_price": 112.91,
+      "low_52w": 110.97,
+      "ptl_ratio": 1.0175,
+      "magna_score": 6,
+      "btm_ratio": 0.6001,
+      "fcf_yield": 0.1218,
+      "roe": 0.1033,
+      "market_cap": 5956775936
+    },
+    {
+      "ticker": "MOS",
+      "name": "Mosaic Company (The)",
+      "sector": "Basic Materials",
+      "current_price": 23.03,
+      "low_52w": 22.74,
+      "ptl_ratio": 1.0128,
+      "magna_score": 3,
+      "btm_ratio": 1.6532,
+      "fcf_yield": -0.0592,
+      "roe": 0.0482,
+      "market_cap": 7320008704
+    }
+  ],
+  "decisions": [
+    {
+      "ticker": "RVTY",
+      "action": "BUY",
+      "quantity": 906,
+      "entry_price": 88.27,
+      "stop_loss": 81.12,
+      "take_profits": [
+        {
+          "level": 101.51,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 110.34,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 123.58,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 3.46,
+      "confidence": 0.61,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "EPAM",
+      "action": "BUY",
+      "quantity": 717,
+      "entry_price": 111.52,
+      "stop_loss": 108.75,
+      "take_profits": [
+        {
+          "level": 128.25,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 139.4,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 156.13,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.27,
+      "confidence": 0.78,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "MOS",
+      "action": "BUY",
+      "quantity": 3501,
+      "entry_price": 22.85,
+      "stop_loss": 22.29,
+      "take_profits": [
+        {
+          "level": 26.28,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 28.56,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 31.99,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.42,
+      "confidence": 0.59,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    }
+  ]
+}
