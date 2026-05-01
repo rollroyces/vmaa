@@ -1,0 +1,637 @@
+{
+  "status": "complete",
+  "timestamp": "2026-05-01 00:16:47.629036",
+  "elapsed_seconds": 227.481828,
+  "market": {
+    "spy_price": 718.6599731445312,
+    "spy_ma50": 678.7171923828125,
+    "above_ma50": true,
+    "volatility_20d": 0.1197,
+    "vol_regime": "LOW",
+    "dd_from_3mo_high": -0.0016,
+    "market_ok": true,
+    "position_scalar": 1.0
+  },
+  "account": {
+    "value": 1000000.0,
+    "buying_power": 4000000.0,
+    "cash": 1000000.0,
+    "positions": 0
+  },
+  "pipeline": {
+    "candidates_found": 16,
+    "decisions_made": 16,
+    "executed": 10,
+    "skipped": 6
+  },
+  "decisions": [
+    {
+      "ticker": "EPAM",
+      "action": "BUY",
+      "quantity": 725,
+      "entry": 110.25,
+      "stop_loss": 107.51,
+      "take_profits": [
+        {
+          "level": 126.79,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 137.81,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 154.35,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 7.99,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.27,
+      "confidence": 0.86,
+      "risk_flags": [
+        "Position capped at max",
+        "IR_sensitive"
+      ]
+    },
+    {
+      "ticker": "RVTY",
+      "action": "BUY",
+      "quantity": 906,
+      "entry": 88.27,
+      "stop_loss": 80.66,
+      "take_profits": [
+        {
+          "level": 101.51,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 110.34,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 123.58,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 3.25,
+      "confidence": 0.59,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "CAG",
+      "action": "BUY",
+      "quantity": 5743,
+      "entry": 13.93,
+      "stop_loss": 13.58,
+      "take_profits": [
+        {
+          "level": 16.02,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 17.41,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 19.5,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.14,
+      "confidence": 0.83,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "TAP",
+      "action": "BUY",
+      "quantity": 1939,
+      "entry": 41.25,
+      "stop_loss": 40.22,
+      "take_profits": [
+        {
+          "level": 47.44,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 51.56,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 57.75,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.21,
+      "confidence": 0.93,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "BLDR",
+      "action": "BUY",
+      "quantity": 969,
+      "entry": 82.48,
+      "stop_loss": 74.97,
+      "take_profits": [
+        {
+          "level": 94.85,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 103.1,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 115.47,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 7.99,
+      "risk_amount": 62500.0,
+      "reward_ratio": 3.07,
+      "confidence": 0.68,
+      "risk_flags": [
+        "Position capped at max",
+        "IR_sensitive"
+      ]
+    },
+    {
+      "ticker": "ARE",
+      "action": "BUY",
+      "quantity": 2019,
+      "entry": 39.61,
+      "stop_loss": 38.62,
+      "take_profits": [
+        {
+          "level": 45.55,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 49.51,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 55.45,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.2,
+      "confidence": 0.85,
+      "risk_flags": [
+        "Position capped at max",
+        "IR_sensitive"
+      ]
+    },
+    {
+      "ticker": "AOS",
+      "action": "BUY",
+      "quantity": 1330,
+      "entry": 60.13,
+      "stop_loss": 58.63,
+      "take_profits": [
+        {
+          "level": 69.15,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 75.16,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 84.18,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.22,
+      "confidence": 0.78,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "HSIC",
+      "action": "BUY",
+      "quantity": 1284,
+      "entry": 62.26,
+      "stop_loss": 60.71,
+      "take_profits": [
+        {
+          "level": 71.6,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 77.83,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 87.16,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 7.99,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.25,
+      "confidence": 0.6,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "POOL",
+      "action": "BUY",
+      "quantity": 407,
+      "entry": 196.47,
+      "stop_loss": 191.58,
+      "take_profits": [
+        {
+          "level": 225.94,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 245.59,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 275.06,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.25,
+      "confidence": 0.57,
+      "risk_flags": [
+        "Position capped at max",
+        "IR_sensitive"
+      ]
+    },
+    {
+      "ticker": "BAX",
+      "action": "BUY_WEAK",
+      "quantity": 4736,
+      "entry": 16.89,
+      "stop_loss": 15.42,
+      "take_profits": [
+        {
+          "level": 19.42,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 21.11,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 23.65,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 3.22,
+      "confidence": 0.49,
+      "risk_flags": [
+        "Position capped at max",
+        "IR_sensitive"
+      ]
+    },
+    {
+      "ticker": "CPB",
+      "action": "BUY",
+      "quantity": 4028,
+      "entry": 19.86,
+      "stop_loss": 19.36,
+      "take_profits": [
+        {
+          "level": 22.84,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 24.82,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 27.8,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.12,
+      "confidence": 0.64,
+      "risk_flags": [
+        "Position capped at max",
+        "IR_sensitive"
+      ]
+    },
+    {
+      "ticker": "TECH",
+      "action": "BUY_WEAK",
+      "quantity": 1728,
+      "entry": 46.28,
+      "stop_loss": 45.13,
+      "take_profits": [
+        {
+          "level": 53.22,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 57.85,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 64.79,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.27,
+      "confidence": 0.49,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "MOS",
+      "action": "BUY",
+      "quantity": 3501,
+      "entry": 22.85,
+      "stop_loss": 22.29,
+      "take_profits": [
+        {
+          "level": 26.28,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 28.56,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 31.99,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.42,
+      "confidence": 0.69,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "NCLH",
+      "action": "BUY_WEAK",
+      "quantity": 3968,
+      "entry": 20.16,
+      "stop_loss": 18.22,
+      "take_profits": [
+        {
+          "level": 23.18,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 25.2,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 28.22,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 8.0,
+      "risk_amount": 62500.0,
+      "reward_ratio": 2.91,
+      "confidence": 0.39,
+      "risk_flags": [
+        "Position capped at max",
+        "IR_sensitive"
+      ]
+    },
+    {
+      "ticker": "FDS",
+      "action": "BUY",
+      "quantity": 430,
+      "entry": 185.92,
+      "stop_loss": 181.3,
+      "take_profits": [
+        {
+          "level": 213.81,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 232.4,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 260.29,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 7.99,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.27,
+      "confidence": 0.66,
+      "risk_flags": [
+        "Position capped at max"
+      ]
+    },
+    {
+      "ticker": "FRT",
+      "action": "BUY",
+      "quantity": 884,
+      "entry": 90.44,
+      "stop_loss": 88.19,
+      "take_profits": [
+        {
+          "level": 104.01,
+          "sell_pct": 30,
+          "label": "TP1"
+        },
+        {
+          "level": 113.05,
+          "sell_pct": 30,
+          "label": "TP2"
+        },
+        {
+          "level": 126.62,
+          "sell_pct": 40,
+          "label": "TP3"
+        }
+      ],
+      "position_pct": 7.99,
+      "risk_amount": 62500.0,
+      "reward_ratio": 11.26,
+      "confidence": 0.54,
+      "risk_flags": [
+        "Position capped at max",
+        "IR_sensitive"
+      ]
+    }
+  ],
+  "execution": {
+    "timestamp": "2026-05-01 00:20:35.110836",
+    "mode": "DRY_RUN",
+    "executed_count": 10,
+    "skipped_count": 6,
+    "executed": [
+      {
+        "ticker": "TAP",
+        "quantity": 1939,
+        "price": 41.25,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      },
+      {
+        "ticker": "EPAM",
+        "quantity": 725,
+        "price": 110.25,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      },
+      {
+        "ticker": "ARE",
+        "quantity": 2019,
+        "price": 39.61,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      },
+      {
+        "ticker": "CAG",
+        "quantity": 5743,
+        "price": 13.93,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      },
+      {
+        "ticker": "AOS",
+        "quantity": 1330,
+        "price": 60.13,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      },
+      {
+        "ticker": "MOS",
+        "quantity": 3501,
+        "price": 22.85,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      },
+      {
+        "ticker": "BLDR",
+        "quantity": 969,
+        "price": 82.48,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      },
+      {
+        "ticker": "FDS",
+        "quantity": 430,
+        "price": 185.92,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      },
+      {
+        "ticker": "CPB",
+        "quantity": 4028,
+        "price": 19.86,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      },
+      {
+        "ticker": "HSIC",
+        "quantity": 1284,
+        "price": 62.26,
+        "status": "DRY_RUN",
+        "reason": "dry_run"
+      }
+    ],
+    "skipped": [
+      {
+        "ticker": "RVTY",
+        "reason": "Daily trade limit"
+      },
+      {
+        "ticker": "POOL",
+        "reason": "Daily trade limit"
+      },
+      {
+        "ticker": "FRT",
+        "reason": "Daily trade limit"
+      },
+      {
+        "ticker": "BAX",
+        "reason": "Daily trade limit"
+      },
+      {
+        "ticker": "TECH",
+        "reason": "Daily trade limit"
+      },
+      {
+        "ticker": "NCLH",
+        "reason": "Daily trade limit"
+      }
+    ]
+  }
+}
