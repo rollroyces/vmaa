@@ -1,0 +1,493 @@
+#!/usr/bin/env python3
+"""
+VMAA 2.0 — Part 2: MAGNA 53/10 Momentum Screener
+==================================================
+Stage 2 of the two-stage pipeline. Purpose: capture momentum and breakout
+signals on stocks that already passed Part 1 quality screening.
+
+MAGNA 53/10 Components:
+  M — Massive Earnings Acceleration
+  A — Acceleration of Sales
+  G — Gap Up (>4% gap + pre-market volume >100K)
+  N — Neglect / Base pattern (months of sideways consolidation)
+  5 — Short Interest Ratio (elevated = squeeze potential)
+  3 — Analyst Target Upgrades (≥3 analysts, target above current)
+  Cap 10 — Market Cap strictly under $10B
+  10 — IPO within 10 years
+
+Entry Trigger Logic:
+  - G (Gap Up) fires → immediate entry signal
+  - M + A both fire → entry signal (fundamental acceleration)
+  - Otherwise → MONITOR (stock is in quality pool but no trigger yet)
+"""
+from __future__ import annotations
+
+import logging
+import time
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
+from config import P2C
+from models import Part1Result, Part2Signal
+
+logger = logging.getLogger("vmaa.part2")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Public API
+# ═══════════════════════════════════════════════════════════════════
+
+def screen_magna(ticker: str, part1: Optional[Part1Result] = None) -> Optional[Part2Signal]:
+    """
+    Run full MAGNA 53/10 screening on a single stock.
+    If part1 is provided, skips market cap and IPO checks (already done).
+    Returns Part2Signal with scores and trigger assessment.
+    """
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        hist = t.history(period="1y")
+
+        if hist is None or len(hist) < 60:
+            logger.debug(f"  {ticker}: Insufficient price history for Part 2")
+            return None
+
+        return _evaluate_magna(ticker, info, hist, t, part1)
+    except Exception as e:
+        logger.debug(f"  {ticker}: Part 2 error — {e}")
+        return None
+
+
+def batch_screen_magna(quality_pool: List[Part1Result]) -> List[Part2Signal]:
+    """
+    Screen all stocks in the quality pool for MAGNA signals.
+    Returns only stocks with valid signals, sorted by MAGNA score.
+    """
+    signals = []
+    total = len(quality_pool)
+    logger.info(f"Part 2: Screening {total} quality-pool stocks for MAGNA signals...")
+
+    for i, p1 in enumerate(quality_pool):
+        if (i + 1) % 20 == 0:
+            logger.info(f"  Part 2 progress: {i+1}/{total} ({len(signals)} signals)")
+        try:
+            signal = screen_magna(p1.ticker, part1=p1)
+            if signal:
+                signals.append(signal)
+        except Exception:
+            pass
+        time.sleep(0.15)
+
+    signals.sort(key=lambda s: (s.magna_score, s.entry_ready), reverse=True)
+    logger.info(f"Part 2 complete: {len(signals)}/{total} have MAGNA signals "
+                f"({len([s for s in signals if s.entry_ready])} entry-ready)")
+    return signals
+
+
+# ═══════════════════════════════════════════════════════════════════
+# M: Massive Earnings Acceleration
+# ═══════════════════════════════════════════════════════════════════
+
+def _check_earnings_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
+    """
+    Check for massive earnings acceleration.
+    Compares latest quarter EPS growth vs previous quarter.
+    Returns: (passed, current_growth, prev_growth, acceleration)
+    """
+    try:
+        fin = t.quarterly_financials
+        if fin is None or fin.empty:
+            return False, 0.0, 0.0, 0.0
+
+        # Try to get Diluted EPS
+        eps = None
+        for label in ['Diluted EPS', 'DilutedEPS', 'Basic EPS', 'BasicEPS']:
+            if label in fin.index:
+                eps = fin.loc[label]
+                break
+        if eps is None:
+            for idx in fin.index:
+                if 'eps' in str(idx).lower() or 'earnings per share' in str(idx).lower():
+                    eps = fin.loc[idx]
+                    break
+
+        if eps is None or len(eps) < 3:
+            return False, 0.0, 0.0, 0.0
+
+        # Latest Q, Previous Q, Same Q last year
+        eps_q0 = float(eps.iloc[0])
+        eps_q1 = float(eps.iloc[1])
+        eps_q4 = float(eps.iloc[3]) if len(eps) > 3 else eps_q1
+
+        if abs(eps_q1) < 1e-6 or abs(eps_q4) < 1e-6:
+            return False, 0.0, 0.0, 0.0
+
+        current_growth = (eps_q0 - eps_q4) / abs(eps_q4)
+        prev_growth = (eps_q1 - eps_q4) / abs(eps_q4) if len(eps) > 3 else current_growth
+        acceleration = current_growth - prev_growth
+
+        # Must have positive current growth AND significant acceleration
+        passed = (current_growth >= P2C.eps_growth_min and
+                  acceleration >= P2C.eps_accel_min)
+
+        return passed, round(current_growth, 4), round(prev_growth, 4), round(acceleration, 4)
+
+    except Exception as e:
+        logger.debug(f"  Earnings acceleration check failed: {e}")
+        return False, 0.0, 0.0, 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════
+# A: Acceleration of Sales
+# ═══════════════════════════════════════════════════════════════════
+
+def _check_sales_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
+    """
+    Check for revenue acceleration.
+    Compares latest quarter revenue growth vs previous quarter.
+    Returns: (passed, current_growth, prev_growth, acceleration)
+    """
+    try:
+        fin = t.quarterly_financials
+        if fin is None or fin.empty:
+            return False, 0.0, 0.0, 0.0
+
+        # Get Total Revenue
+        revenue = None
+        for label in ['Total Revenue', 'TotalRevenue', 'Revenue']:
+            if label in fin.index:
+                revenue = fin.loc[label]
+                break
+        if revenue is None:
+            for idx in fin.index:
+                if 'revenue' in str(idx).lower():
+                    revenue = fin.loc[idx]
+                    break
+
+        if revenue is None or len(revenue) < 3:
+            return False, 0.0, 0.0, 0.0
+
+        rev_q0 = float(revenue.iloc[0])
+        rev_q1 = float(revenue.iloc[1])
+        rev_q4 = float(revenue.iloc[3]) if len(revenue) > 3 else rev_q1
+
+        if rev_q4 <= 0:
+            return False, 0.0, 0.0, 0.0
+
+        current_growth = (rev_q0 - rev_q4) / rev_q4
+        prev_growth = (rev_q1 - rev_q4) / rev_q4
+        acceleration = current_growth - prev_growth
+
+        passed = (current_growth >= P2C.revenue_growth_min and
+                  acceleration >= P2C.revenue_accel_min)
+
+        return passed, round(current_growth, 4), round(prev_growth, 4), round(acceleration, 4)
+
+    except Exception as e:
+        logger.debug(f"  Sales acceleration check failed: {e}")
+        return False, 0.0, 0.0, 0.0
+
+
+# ═══════════════════════════════════════════════════════════════════
+# G: Gap Up Detection
+# ═══════════════════════════════════════════════════════════════════
+
+def _check_gap_up(hist: pd.DataFrame, info: dict) -> Tuple[bool, bool, float, int]:
+    """
+    Detect gap-up events:
+      Condition 1: Gap > 4% (open > prev close by 4%+)
+      Condition 2: Pre-market volume > 100K shares
+    
+    Returns: (gap_detected, premarket_vol_ok, gap_pct, premarket_volume)
+    """
+    gap_detected = False
+    gap_pct = 0.0
+    lookback = min(P2C.gap_lookback_days, len(hist) - 1)
+
+    recent = hist.tail(lookback + 1)
+    for i in range(1, len(recent)):
+        prev_close = float(recent['Close'].iloc[i-1])
+        curr_open = float(recent['Open'].iloc[i])
+        if prev_close > 0:
+            gap = (curr_open - prev_close) / prev_close
+            if gap >= P2C.gap_min_pct:
+                gap_detected = True
+                gap_pct = max(gap_pct, gap)
+                # Store the gap day for volume check
+                break
+
+    # Pre-market volume
+    premarket_vol = info.get('preMarketVolume', 0) or 0
+    premarket_vol_ok = premarket_vol >= P2C.gap_premarket_vol_min
+
+    return gap_detected, premarket_vol_ok, round(gap_pct, 4), premarket_vol
+
+
+# ═══════════════════════════════════════════════════════════════════
+# N: Neglect / Base Pattern Detection
+# ═══════════════════════════════════════════════════════════════════
+
+def _check_neglect_base(hist: pd.DataFrame) -> Tuple[bool, float, float]:
+    """
+    Detect if stock is in a neglect/base consolidation pattern.
+    Characteristics:
+      - Sideways price action within 20-30% range
+      - Duration of at least 3 months
+      - Declining volume over the base period
+    
+    Returns: (base_detected, duration_months, range_pct)
+    """
+    if len(hist) < 63:  # Need at least ~3 months of data
+        return False, 0.0, 0.0
+
+    # Split into two halves: early base vs late base
+    midpoint = len(hist) // 2
+    early = hist.iloc[:midpoint]
+    late = hist.iloc[midpoint:]
+
+    # Overall range
+    high_all = float(hist['High'].max())
+    low_all = float(hist['Low'].min())
+    if high_all <= 0:
+        return False, 0.0, 0.0
+
+    range_pct = (high_all - low_all) / high_all
+
+    # Duration in months
+    days = (hist.index[-1] - hist.index[0]).days
+    duration_months = round(days / 30.44, 1)
+
+    # Volume decline: is late volume lower than early volume?
+    early_vol = float(early['Volume'].mean()) if len(early) > 0 else 0
+    late_vol = float(late['Volume'].mean()) if len(late) > 0 else 0
+    vol_decline = (early_vol - late_vol) / early_vol if early_vol > 0 else 0
+
+    # Check base criteria
+    is_base = (
+        duration_months >= P2C.base_min_months and
+        range_pct <= P2C.base_max_range_pct and
+        vol_decline >= P2C.base_vol_decline_pct
+    )
+
+    return is_base, duration_months, round(range_pct, 4)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 5: Short Interest
+# ═══════════════════════════════════════════════════════════════════
+
+def _check_short_interest(info: dict) -> Tuple[int, float, float]:
+    """
+    Evaluate short interest for squeeze potential.
+    Returns: (score 0-2, short_ratio, short_pct_float)
+    """
+    short_ratio = info.get('shortRatio', 0) or 0
+    short_pct = info.get('shortPercentOfFloat', 0) or 0
+
+    score = 0
+    if short_ratio >= P2C.short_ratio_high and short_pct >= P2C.short_pct_float_min:
+        score = 2
+    elif short_ratio >= P2C.short_ratio_moderate:
+        score = 1
+
+    return score, round(float(short_ratio), 2), round(float(short_pct), 4)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 3: Analyst Target Upgrades
+# ═══════════════════════════════════════════════════════════════════
+
+def _check_analyst_upgrades(info: dict, price: float) -> Tuple[bool, int, float]:
+    """
+    Check if ≥3 analysts cover the stock with target above current price.
+    
+    Note: yfinance doesn't provide analyst revision history, so we use:
+      - Number of analysts covering
+      - Mean target price vs current price (≥15% upside)
+    For full revision tracking, would need Bloomberg/Refinitiv data.
+    
+    Returns: (passed, analyst_count, target_mean)
+    """
+    analyst_count = info.get('numberOfAnalystOpinions', 0) or 0
+    target_mean = info.get('targetMeanPrice', 0) or 0
+
+    if analyst_count < P2C.analyst_count_min:
+        return False, analyst_count, 0.0
+
+    if price <= 0 or target_mean <= 0:
+        return False, analyst_count, target_mean
+
+    premium = (target_mean - price) / price
+    passed = premium >= P2C.analyst_target_premium_pct
+
+    return passed, analyst_count, round(float(target_mean), 2)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Cap 10 & 10 (prerequisites, not scored)
+# ═══════════════════════════════════════════════════════════════════
+
+def _check_cap_and_ipo(info: dict) -> Tuple[bool, bool, Optional[float]]:
+    """
+    Prerequisite checks (not scored):
+      - Market cap < $10B
+      - IPO within 10 years
+    
+    Returns: (cap_ok, ipo_ok, ipo_years)
+    """
+    market_cap = info.get('marketCap', 0) or 0
+    cap_ok = market_cap > 0 and market_cap <= P2C.max_market_cap
+
+    ipo_years = None
+    ipo_ok = False
+    first_trade = info.get('firstTradeDateEpochUtc')
+    if first_trade:
+        try:
+            ipo_date = datetime.fromtimestamp(first_trade)
+            ipo_years = round((datetime.now() - ipo_date).days / 365.25, 1)
+            ipo_ok = ipo_years <= P2C.max_ipo_years
+        except Exception:
+            pass
+
+    return cap_ok, ipo_ok, ipo_years
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Full MAGNA Evaluation
+# ═══════════════════════════════════════════════════════════════════
+
+def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
+                     t: yf.Ticker, part1: Optional[Part1Result] = None) -> Optional[Part2Signal]:
+    """
+    Run all MAGNA 53/10 checks and compute composite score.
+    Entry is triggered when G fires OR M+A both fire.
+    """
+    price = float(info.get('regularMarketPrice') or
+                  info.get('currentPrice') or
+                  info.get('previousClose', 0))
+
+    magna_score = 0
+    trigger_signals: List[str] = []
+
+    # ── Cap 10 & 10 (prerequisites) ──
+    cap_ok, ipo_ok, ipo_years = _check_cap_and_ipo(info)
+
+    # If we have Part1 data, we already know cap is < $10B
+    if part1 and part1.market_cap > 0:
+        cap_ok = part1.market_cap <= P2C.max_market_cap
+
+    # Cap 10: hard requirement (per MAGNA spec, must be <$10B for momentum stocks)
+    if not cap_ok:
+        logger.debug(f"  {ticker}: Cap > $10B, rejected by MAGNA Cap 10")
+        return None
+    # IPO 10: hard requirement per spec ("需在10年以內")
+    if not ipo_ok and ipo_years is not None:
+        if P2C.ipo_hard_requirement:
+            logger.debug(f"  {ticker}: IPO > 10yr ({ipo_years:.0f}yr), REJECTED")
+            return None
+        else:
+            logger.debug(f"  {ticker}: IPO > 10yr ({ipo_years:.0f}yr), soft flag (not rejected)")
+
+    # ── M: Earnings Acceleration ──
+    m_pass, eps_curr, eps_prev, eps_accel = _check_earnings_accel(t)
+    if m_pass:
+        magna_score += P2C.magna_points['m_earnings_accel']
+        trigger_signals.append('M')
+
+    # ── A: Sales Acceleration ──
+    a_pass, rev_curr, rev_prev, rev_accel = _check_sales_accel(t)
+    if a_pass:
+        magna_score += P2C.magna_points['a_sales_accel']
+        trigger_signals.append('A')
+
+    # ── G: Gap Up ──
+    g_pass, g_vol_ok, gap_pct, premarket_vol = _check_gap_up(hist, info)
+    # Only award points and trigger if BOTH gap AND premarket volume conditions met (per spec)
+    g_full_pass = g_pass and g_vol_ok
+    if g_pass:
+        trigger_signals.append('G')
+    if g_full_pass:
+        magna_score += P2C.magna_points['g_gap_up']
+        trigger_signals.append('G_vol')
+
+    # ── N: Neglect / Base ──
+    n_pass, base_duration, base_range = _check_neglect_base(hist)
+    if n_pass:
+        magna_score += P2C.magna_points['n_neglect_base']
+        trigger_signals.append('N')
+
+    # ── 5: Short Interest ──
+    si_score, short_ratio, short_pct = _check_short_interest(info)
+    magna_score += si_score
+    if si_score > 0:
+        trigger_signals.append(f'SI({si_score})')
+
+    # ── 3: Analyst Target Upgrades ──
+    analyst_pass, analyst_count, analyst_target = _check_analyst_upgrades(info, price)
+    # Check for RECENT upgrade via cached analyst data (heuristic for spec requirement)
+    recently_upgraded = False
+    if analyst_pass:
+        try:
+            from analyst_tracker import check_recent_upgrade
+            recently_upgraded = check_recent_upgrade(ticker, analyst_target, analyst_count)
+        except ImportError:
+            pass  # Tracker not available, fall through to basic check
+    upgraded_pass = analyst_pass and recently_upgraded
+    if upgraded_pass:
+        magna_score += P2C.magna_points['analyst_upgrades']
+        trigger_signals.append(f'A[{analyst_count}]↑')
+    elif analyst_pass:
+        # Analysts favorable but no recent upgrade detected — flag as informational
+        trigger_signals.append(f'A[{analyst_count}]·')
+
+    # ── Composite ──
+    magna_score = min(magna_score, 10)
+
+    # ── Entry Trigger Logic ──
+    # Entry fires when: G (Gap + Premarket Vol) OR both M+A fire simultaneously
+    entry_ready = False
+    if g_full_pass:
+        entry_ready = True  # Gap-up WITH premarket volume confirmation
+    elif m_pass and a_pass:
+        entry_ready = True  # Fundamental acceleration trigger
+
+    if magna_score < P2C.magna_pass_threshold and not entry_ready:
+        return None
+
+    return Part2Signal(
+        ticker=ticker,
+        m_earnings_accel=m_pass,
+        a_sales_accel=a_pass,
+        g_gap_up=g_pass,
+        g_premarket_vol_ok=g_vol_ok,
+        n_neglect_base=n_pass,
+        short_interest_high=(si_score >= 2),
+        short_interest_score=si_score,
+        analyst_upgrades=upgraded_pass,
+        analyst_recently_upgraded=recently_upgraded,
+        cap_under_10b=cap_ok,
+        ipo_within_10yr=ipo_ok,
+        eps_growth_qoq=eps_curr,
+        eps_growth_prev_qoq=eps_prev,
+        eps_acceleration=eps_accel,
+        revenue_growth_qoq=rev_curr,
+        revenue_growth_prev_qoq=rev_prev,
+        revenue_acceleration=rev_accel,
+        gap_pct=gap_pct,
+        premarket_volume=premarket_vol,
+        short_ratio=short_ratio,
+        short_pct_float=short_pct,
+        base_duration_months=base_duration,
+        base_range_pct=base_range,
+        analyst_count=analyst_count,
+        analyst_target_mean=analyst_target,
+        ipo_years=ipo_years,
+        magna_score=magna_score,
+        trigger_signals=trigger_signals,
+        entry_ready=entry_ready,
+        signal_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
+    )
