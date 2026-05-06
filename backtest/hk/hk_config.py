@@ -125,10 +125,12 @@ class HKBacktestConfig:
     max_tickers: int = 0
 
     # ── Position Sizing ──
-    max_positions: int = 8
+    max_positions: int = 5
     max_positions_per_sector: int = 2
-    max_position_pct: float = 0.20
-    kelly_fraction: float = 0.25
+    max_position_pct: float = 0.25            # Increased from 0.20 for concentration
+    kelly_fraction: float = 0.25              # Base Kelly fraction
+    kelly_fraction_bull: float = 0.40         # Aggressive in bull markets
+    kelly_fraction_bear: float = 0.15         # Conservative in bear markets
     min_position_hkd: float = 2000.0          # Min HKD 2K position
 
     # ── Stop Loss / Take Profit ──
@@ -136,9 +138,15 @@ class HKBacktestConfig:
     hard_stop_pct: float = 0.15              # 15% for HK (wider: higher vol)
     trailing_stop_pct: float = 0.10
     trailing_activate_after: float = 0.12
-    time_stop_days: int = 90                 # HK: longer runway
+    time_stop_days: int = 180                # Extended — trailing stop is primary exit
     tp_levels: List[float] = field(default_factory=lambda: [0.12, 0.22, 0.35])
     tp_sell_fractions: List[float] = field(default_factory=lambda: [0.30, 0.30, 0.40])
+
+    # ── Sector Rotation ──
+    sector_momentum_enabled: bool = True
+    sector_momentum_lookback: int = 60        # Days for sector performance ranking
+    sector_momentum_top_n: int = 3            # Top N sectors get double allocation
+    sector_momentum_boost: int = 2            # Extra positions for top sectors
 
     # ── Data ──
     fundamental_report_lag_days: int = 45

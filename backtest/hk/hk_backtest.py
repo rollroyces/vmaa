@@ -444,6 +444,39 @@ class HKBacktestEngine:
     # Rebalance
     # ═══════════════════════════════════════════════════════════════
 
+    def _compute_sector_momentum(self, tickers: List[str],
+                                   date_str: str) -> set:
+        """Rank sectors by recent performance. Top N get double allocation."""
+        target = pd.Timestamp(date_str)
+        lookback = self.config.sector_momentum_lookback
+        sector_returns: Dict[str, float] = {}
+        
+        for ticker in tickers:
+            sector = self.loader.get_sector(ticker)
+            if not sector or sector == 'Unknown':
+                continue
+            hist = self._daily_prices.get(ticker)
+            if hist is None or len(hist) < lookback:
+                continue
+            available = hist[hist.index <= target].tail(lookback)
+            if len(available) < 20:
+                continue
+            ret = (float(available['Close'].iloc[-1]) / float(available['Close'].iloc[0]) - 1)
+            if sector not in sector_returns:
+                sector_returns[sector] = []
+            sector_returns[sector].append(ret)
+        
+        # Average return per sector
+        sector_avg = {}
+        for sec, rets in sector_returns.items():
+            if rets:
+                sector_avg[sec] = sum(rets) / len(rets)
+        
+        # Top N sectors
+        top_n = self.config.sector_momentum_top_n
+        top_sectors = set(sorted(sector_avg, key=sector_avg.get, reverse=True)[:top_n])
+        return top_sectors
+
     def _do_rebalance(self, date_str: str, tickers: List[str],
                       hsi_hist: pd.DataFrame) -> None:
         """Run full VMAA-HK pipeline on a rebalance date."""
@@ -452,6 +485,11 @@ class HKBacktestEngine:
         scalar = self._market_regime.get("position_scalar", 0.8)
         if not self._market_regime.get("market_ok", True):
             scalar = 0.50  # Floor raised from 0.25 — avoid over-penalising
+
+        # Compute sector momentum rankings (Fix #4)
+        self._top_sectors: set = set()
+        if self.config.sector_momentum_enabled:
+            self._top_sectors = self._compute_sector_momentum(tickers, date_str)
 
         # Run Part 1 + Part 2 on all tickers
         candidates: List[HKCandidate] = []
@@ -522,6 +560,11 @@ class HKBacktestEngine:
             sector_limit = self.config.max_positions_per_sector
             if hs_streak >= 2:
                 sector_limit = max(1, sector_limit // 2)
+            
+            # Fix #4: Sector momentum rotation — double limit for top sectors
+            if self.config.sector_momentum_enabled and sector in self._top_sectors:
+                sector_limit += self.config.sector_momentum_boost
+            
             if sector_count >= sector_limit:
                 skipped_sector += 1
                 continue
@@ -592,7 +635,16 @@ class HKBacktestEngine:
         kelly = max(0, min(kelly, 0.25))
 
         portfolio_value = self.portfolio.equity
-        risk_capital = portfolio_value * kelly * self.config.kelly_fraction * scalar
+        # Adaptive Kelly: aggressive in bull, conservative in bear
+        market_ok = self._market_regime.get("market_ok", True)
+        vol_regime = self._market_regime.get("vol_regime", "NORMAL")
+        if market_ok and vol_regime == "LOW":
+            kelly_frac = self.config.kelly_fraction_bull  # 0.40 in calm bull
+        elif not market_ok:
+            kelly_frac = self.config.kelly_fraction_bear  # 0.15 in bear
+        else:
+            kelly_frac = self.config.kelly_fraction       # 0.25 normal
+        risk_capital = portfolio_value * kelly * kelly_frac * scalar
         raw_qty = int(risk_capital / risk_per_share) if risk_per_share > 0 else 0
 
         max_alloc = portfolio_value * self.config.max_position_pct
