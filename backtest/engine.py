@@ -616,9 +616,9 @@ class BacktestEngine:
             self.portfolio.update_prices(prices_today)
             self._check_exits(date_str, prices_today)
 
-            # Rebalance if it's a rebalance date
-            if (rebalance_idx < len(rebalance_dates) and
-                date_str == rebalance_dates[rebalance_idx]):
+            # Rebalance — use >= to handle holidays where date ≠ trading day
+            while (rebalance_idx < len(rebalance_dates) and
+                date_str >= rebalance_dates[rebalance_idx]):
                 self._do_rebalance(date_str, tickers, bench_hist)
                 rebalance_idx += 1
 
@@ -771,7 +771,8 @@ class BacktestEngine:
         # Position sizing (Quarter-Kelly)
         confidence = self._compute_confidence(candidate)
         risk_per_share = entry_price * self.config.hard_stop_pct
-        win_prob = 0.50 * confidence
+        # Base win probability 50% modulated by confidence (0.45 → 0.55 range)
+        win_prob = 0.45 + confidence * 0.10
         payout = 2.0
         kelly = (payout * win_prob - (1 - win_prob)) / payout
         kelly = max(0, min(kelly, 0.25))
@@ -901,7 +902,6 @@ class BacktestEngine:
         if pos is None:
             return
 
-        gross_pnl = (exit_price - pos.entry_price) * pos.quantity
         hist = self._daily_prices.get(ticker)
         daily_vol = 0
         if hist is not None:
@@ -912,27 +912,23 @@ class BacktestEngine:
             except Exception:
                 pass
 
-        cost = self.cost_model.total_cost(exit_price, pos.quantity, daily_vol)
-        net_pnl = gross_pnl - cost
-
-        # Credit cash
-        proceeds = exit_price * pos.quantity - cost
-        self.portfolio.cash += proceeds
-
-        # For TP partial exits, adjust quantity
+        # For TP partial exits: sell only the configured fraction
         if 'take_profit' in reason:
-            # Only sell the TP portion
             for tp in pos.take_profits:
                 if tp['label'] in reason:
-                    sell_qty = int(pos.quantity * tp['sell_pct'])
-                    sell_qty = max(1, sell_qty)
+                    sell_qty = max(1, int(pos.quantity * tp['sell_pct']))
+                    sell_qty = min(sell_qty, pos.quantity)
+
+                    gross_pnl = (exit_price - pos.entry_price) * sell_qty
+                    cost = self.cost_model.total_cost(exit_price, sell_qty, daily_vol)
+                    net_pnl = gross_pnl - cost
                     proceeds = exit_price * sell_qty - cost
                     self.portfolio.cash += proceeds
-                    # Reduce position
+
+                    # Reduce position + remove consumed TP level
                     pos.quantity -= sell_qty
                     pos.cost_basis = pos.entry_price * pos.quantity
-                    if pos.quantity <= 0:
-                        self.portfolio.positions.pop(ticker, None)
+                    pos.take_profits = [t for t in pos.take_profits if t['label'] != tp['label']]
 
                     # Record partial trade
                     trade = TradeRecord(
@@ -942,11 +938,11 @@ class BacktestEngine:
                         entry_price=pos.entry_price,
                         exit_price=exit_price,
                         quantity=sell_qty,
-                        gross_pnl=gross_pnl * tp['sell_pct'],
-                        net_pnl=net_pnl * tp['sell_pct'],
-                        cost=cost,
-                        return_pct=(exit_price / pos.entry_price - 1) * 100,
-                        exit_reason=reason,
+                        gross_pnl=round(gross_pnl, 2),
+                        net_pnl=round(net_pnl, 2),
+                        cost=round(cost, 2),
+                        return_pct=round((exit_price / pos.entry_price - 1) * 100, 2),
+                        exit_reason=reason + "_partial",
                         holding_days=(pd.Timestamp(date_str) - pd.Timestamp(pos.entry_date)).days,
                         entry_method=pos.entry_method,
                         sector=pos.sector,
@@ -954,7 +950,17 @@ class BacktestEngine:
                         is_win=exit_price > pos.entry_price,
                     )
                     self.trades.append(trade)
+
+                    if pos.quantity <= 0:
+                        self.portfolio.positions.pop(ticker, None)
                     return
+
+        # Full close (non-TP reason)
+        gross_pnl = (exit_price - pos.entry_price) * pos.quantity
+        cost = self.cost_model.total_cost(exit_price, pos.quantity, daily_vol)
+        net_pnl = gross_pnl - cost
+        proceeds = exit_price * pos.quantity - cost
+        self.portfolio.cash += proceeds
 
         entry_dt = pd.Timestamp(pos.entry_date)
         exit_dt = pd.Timestamp(date_str)

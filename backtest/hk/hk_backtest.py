@@ -362,9 +362,9 @@ class HKBacktestEngine:
             self.portfolio.update_prices(prices_today)
             self._check_exits(date_str, prices_today)
 
-            # Rebalance
-            if (rebalance_idx < len(rebalance_dates) and
-                    date_str == rebalance_dates[rebalance_idx]):
+            # Rebalance — use >= to handle holidays where BME date ≠ trading day
+            while (rebalance_idx < len(rebalance_dates) and
+                    date_str >= rebalance_dates[rebalance_idx]):
                 self._do_rebalance(date_str, tickers, hsi_hist)
                 rebalance_idx += 1
 
@@ -440,8 +440,6 @@ class HKBacktestEngine:
     def _do_rebalance(self, date_str: str, tickers: List[str],
                       hsi_hist: pd.DataFrame) -> None:
         """Run full VMAA-HK pipeline on a rebalance date."""
-        logger.debug(f"  🔄 HK Rebalance: {date_str}")
-
         # Market regime
         self._market_regime = self.screener.get_hk_market_regime(hsi_hist, date_str)
         scalar = self._market_regime.get("position_scalar", 0.8)
@@ -450,6 +448,8 @@ class HKBacktestEngine:
 
         # Run Part 1 + Part 2 on all tickers
         candidates: List[HKCandidate] = []
+        parti_pass = 0
+        part2_pass = 0
         for ticker in tickers:
             if ticker in self.portfolio.positions:
                 continue
@@ -462,11 +462,13 @@ class HKBacktestEngine:
             quality = self.screener.screen_part1(snapshot)
             if quality is None:
                 continue
+            parti_pass += 1
 
             # Part 2: HK MAGNA
             magna = self.screener.screen_part2(ticker, quality, snapshot, date_str)
             if magna is None or magna.magna_score < self.config.thresholds.magna_min_score:
                 continue
+            part2_pass += 1
 
             # Composite rank
             composite = quality.get("quality_score", 0) * 0.50 + (magna.magna_score / 10) * 0.35
@@ -484,19 +486,43 @@ class HKBacktestEngine:
         # Sort: entry-ready first, then composite
         candidates.sort(key=lambda c: (c.entry_triggered, c.composite_rank), reverse=True)
 
+        logger.info(
+            f"  🔄 {date_str} | Cand={parti_pass} part1/{part2_pass} part2/"
+            f"{sum(1 for c in candidates if c.entry_triggered)} entry | "
+            f"Pos={self.portfolio.num_positions} | Cash=HKD {self.portfolio.cash:,.0f} | "
+            f"Scalar={scalar:.2f}"
+        )
+
         # Execute entries
+        entered = 0
+        skipped_max_pos = 0
+        skipped_sector = 0
+        skipped_sizing = 0
         for candidate in candidates:
             if self.portfolio.num_positions >= self.config.max_positions:
-                break
+                skipped_max_pos += 1
+                continue
 
             sector = candidate.quality.get("sector", "")
             sector_count = sum(
                 1 for p in self.portfolio.positions.values() if p.sector == sector
             )
             if sector_count >= self.config.max_positions_per_sector:
+                skipped_sector += 1
                 continue
 
+            pos_before = self.portfolio.num_positions
             self._execute_entry(candidate, date_str, scalar)
+            if self.portfolio.num_positions > pos_before:
+                entered += 1
+            else:
+                skipped_sizing += 1
+
+        if skipped_max_pos + skipped_sector + skipped_sizing > 0 or entered > 0:
+            logger.info(
+                f"    Entered: {entered} | Skipped: {skipped_max_pos} max_pos, "
+                f"{skipped_sector} sector, {skipped_sizing} sizing"
+            )
 
     def _execute_entry(self, candidate: HKCandidate, date_str: str,
                        scalar: float) -> None:
@@ -521,7 +547,8 @@ class HKBacktestEngine:
 
         # Position sizing (Kelly)
         risk_per_share = entry_price * self.config.hard_stop_pct
-        win_prob = 0.50 * confidence
+        # Base win probability 50% modulated by confidence (0.45 → 0.55 range)
+        win_prob = 0.45 + confidence * 0.10
         payout = 2.0
         kelly = (payout * win_prob - (1 - win_prob)) / payout
         kelly = max(0, min(kelly, 0.25))
@@ -626,8 +653,24 @@ class HKBacktestEngine:
             triggered, reason, exit_price = pos.check_stop(bar_low, bar_high, bar_open)
             if triggered:
                 exit_price = max(exit_price, 0.01)
-                self._close_position(ticker, date_str, exit_price, reason)
-                exited.append(ticker)
+                # Partial take-profit: sell only the configured fraction
+                if reason.startswith("take_profit_"):
+                    tp_label = reason.replace("take_profit_", "")
+                    sell_fraction = 1.0
+                    for tp in pos.take_profits:
+                        if tp['label'] == tp_label:
+                            sell_fraction = tp.get('sell_pct', 1.0)
+                            break
+                    if sell_fraction < 1.0 and pos.quantity > 1:
+                        self._close_partial_position(ticker, date_str, exit_price, reason, sell_fraction)
+                        # Remove consumed TP level so it doesn't re-trigger
+                        pos.take_profits = [tp for tp in pos.take_profits if tp['label'] != tp_label]
+                    else:
+                        self._close_position(ticker, date_str, exit_price, reason)
+                        exited.append(ticker)
+                else:
+                    self._close_position(ticker, date_str, exit_price, reason)
+                    exited.append(ticker)
 
         for t in exited:
             self.portfolio.positions.pop(t, None)
@@ -645,6 +688,61 @@ class HKBacktestEngine:
                 exited.append(ticker)
         for t in exited:
             self.portfolio.positions.pop(t, None)
+
+    def _close_partial_position(self, ticker: str, date_str: str,
+                                 exit_price: float, reason: str,
+                                 sell_fraction: float) -> None:
+        """Partially close a position (take-profit scaling)."""
+        pos = self.portfolio.positions.get(ticker)
+        if pos is None or pos.quantity <= 1:
+            return
+
+        sell_qty = max(1, int(pos.quantity * sell_fraction))
+        sell_qty = min(sell_qty, pos.quantity)
+        if sell_qty <= 0:
+            return
+
+        gross_pnl = (exit_price - pos.entry_price) * sell_qty
+        cost = self.cost_model.total_cost(exit_price, sell_qty)
+        net_pnl = gross_pnl - cost
+        proceeds = exit_price * sell_qty - cost
+        self.portfolio.cash += proceeds
+
+        # Update position: reduce quantity, proportional cost basis
+        original_qty = pos.quantity + sell_qty  # before sale
+        pos.cost_basis = pos.cost_basis * (pos.quantity / original_qty) if original_qty > 0 else 0
+        pos.quantity -= sell_qty
+        pos.market_value = pos.current_price * pos.quantity
+
+        entry_dt = pd.Timestamp(pos.entry_date)
+        exit_dt = pd.Timestamp(date_str)
+        holding_days = (exit_dt - entry_dt).days
+
+        trade = HKTradeRecord(
+            ticker=ticker,
+            entry_date=pos.entry_date,
+            exit_date=date_str,
+            entry_price=pos.entry_price,
+            exit_price=exit_price,
+            quantity=sell_qty,
+            gross_pnl=round(gross_pnl, 2),
+            net_pnl=round(net_pnl, 2),
+            cost=round(cost, 2),
+            return_pct=round((exit_price / pos.entry_price - 1) * 100, 2),
+            exit_reason=reason + "_partial",
+            holding_days=holding_days,
+            sector=pos.sector,
+            entry_method=pos.entry_method,
+            confidence=pos.confidence,
+            is_win=exit_price > pos.entry_price,
+        )
+        self.trades.append(trade)
+
+        logger.debug(
+            f"    🇭🇰 SELL {ticker:10s} {sell_qty}sh ({sell_fraction:.0%}) @ HKD {exit_price:.2f} "
+            f"PnL=HKD {trade.net_pnl:,.0f} ({trade.return_pct:+.1f}%) [{reason}] "
+            f"Remain: {pos.quantity}sh"
+        )
 
     def _close_position(self, ticker: str, date_str: str,
                         exit_price: float, reason: str) -> None:
