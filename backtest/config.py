@@ -93,21 +93,29 @@ class BacktestConfig:
 
     # ── Position Sizing ──
     # Override RiskConfig values for backtest
-    max_positions: int = 8
+    max_positions: int = 5
     max_positions_per_sector: int = 2
-    max_position_pct: float = 0.20
-    kelly_fraction: float = 0.25
+    max_position_pct: float = 0.25
+    kelly_fraction: float = 0.25              # Base Kelly fraction
+    kelly_fraction_bull: float = 0.40         # Aggressive in bull markets
+    kelly_fraction_bear: float = 0.15         # Conservative in bear markets
     min_position_size: float = 500.0
 
     # ── Stop Loss / Take Profit ──
     atr_stop_multiplier: float = 2.0
-    hard_stop_pct: float = 0.10
-    trailing_stop_pct: float = 0.08
-    trailing_activate_after: float = 0.10  # Activate trailing after 10% gain
-    time_stop_days: int = 60
+    hard_stop_pct: float = 0.15
+    trailing_stop_pct: float = 0.10
+    trailing_activate_after: float = 0.12  # Activate trailing after 10% gain
+    time_stop_days: int = 180
     # Take profit levels (pct above entry)
     tp_levels: List[float] = field(default_factory=lambda: [0.12, 0.22, 0.35])
     tp_sell_fractions: List[float] = field(default_factory=lambda: [0.30, 0.30, 0.40])
+
+    # ── Sector Rotation ──
+    sector_momentum_enabled: bool = True
+    sector_momentum_lookback: int = 60
+    sector_momentum_top_n: int = 3
+    sector_momentum_boost: int = 2
 
     # ── Walk-Forward Parameters ──
     # If enabled, split into in-sample / out-of-sample periods

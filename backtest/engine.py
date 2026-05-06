@@ -507,6 +507,12 @@ class BacktestEngine:
         self._prev_equity: float = 0.0
         self._daily_prices: Dict[str, pd.DataFrame] = {}
         self._market_regime = None  # Set per-date in _run_rebalance
+        
+        # Improvement: track hard-stopped tickers for cooldown (6 months)
+        self._hard_stopped_tickers: Dict[str, str] = {}
+        self._hs_cooldown_days: int = 180
+        self._sector_hs_streak: Dict[str, int] = {}
+        self._top_sectors: set = set()
 
     def run(self, tickers: Optional[List[str]] = None) -> BacktestResult:
         """
@@ -691,6 +697,30 @@ class BacktestEngine:
 
     # ── Rebalance Logic ──
 
+    def _compute_sector_momentum(self, tickers: List[str],
+                                   date_str: str) -> set:
+        """Rank sectors by recent performance. Top N get double allocation."""
+        target = pd.Timestamp(date_str)
+        lookback = self.config.sector_momentum_lookback
+        sector_returns: Dict[str, float] = {}
+        for ticker in tickers:
+            sector = self.screener._yf_cache.get(ticker, {}).get('sector', '')
+            if not sector or sector == 'Unknown':
+                continue
+            hist = self._daily_prices.get(ticker)
+            if hist is None or len(hist) < lookback:
+                continue
+            available = hist[hist.index <= target].tail(lookback)
+            if len(available) < 20:
+                continue
+            ret = (float(available['Close'].iloc[-1]) / float(available['Close'].iloc[0]) - 1)
+            if sector not in sector_returns:
+                sector_returns[sector] = []
+            sector_returns[sector].append(ret)
+        sector_avg = {s: sum(r)/len(r) for s, r in sector_returns.items() if r}
+        top_n = self.config.sector_momentum_top_n
+        return set(sorted(sector_avg, key=sector_avg.get, reverse=True)[:top_n])
+
     def _do_rebalance(self, date_str: str, tickers: List[str],
                       bench_hist: pd.DataFrame) -> None:
         """Run full VMAA pipeline on a rebalance date."""
@@ -700,6 +730,11 @@ class BacktestEngine:
         market = self.signal_gen.get_market_regime(bench_hist, date_str)
         self._market_regime = market
         scalar = market.position_scalar if market.market_ok else 0.25
+
+        # Compute sector momentum rankings
+        self._top_sectors: set = set()
+        if self.config.sector_momentum_enabled:
+            self._top_sectors = self._compute_sector_momentum(tickers, date_str)
 
         # Run Part 1 on all tickers
         candidates: List[VMAACandidate] = []
@@ -751,12 +786,44 @@ class BacktestEngine:
 
             # Sector limit
             sector = candidate.part1.sector
+            if not sector or sector == 'Unknown':
+                continue
             sector_count = sum(1 for p in self.portfolio.positions.values()
                               if p.sector == sector)
-            if sector_count >= self.config.max_positions_per_sector:
+            
+            # Sector loss tracker — halve per-sector limit after 2 consecutive HS
+            hs_streak = self._sector_hs_streak.get(sector, 0)
+            sector_limit = self.config.max_positions_per_sector
+            if hs_streak >= 2:
+                sector_limit = max(1, sector_limit // 2)
+            # Sector momentum rotation — double limit for top sectors
+            if self.config.sector_momentum_enabled and sector in self._top_sectors:
+                sector_limit += self.config.sector_momentum_boost
+            
+            if sector_count >= sector_limit:
                 continue
 
             # Entry decision
+            # Momentum filter: require price > 20-day MA
+            ticker = candidate.ticker
+            hist = self._daily_prices.get(ticker)
+            if hist is not None and len(hist) >= 20:
+                target = pd.Timestamp(date_str)
+                available = hist[hist.index <= target]
+                if len(available) >= 20:
+                    ma20 = float(available['Close'].tail(20).mean())
+                    if available['Close'].iloc[-1] < ma20 * 0.98:
+                        continue  # Skip falling knives
+            
+            # Repeat-offender cooldown: ban ticker 6mo after hard stop
+            if ticker in self._hard_stopped_tickers:
+                last_hs = pd.Timestamp(self._hard_stopped_tickers[ticker])
+                cooldown_end = last_hs + pd.Timedelta(days=self._hs_cooldown_days)
+                if pd.Timestamp(date_str) < cooldown_end:
+                    continue
+                else:
+                    del self._hard_stopped_tickers[ticker]
+            
             self._execute_entry(candidate, date_str, scalar)
 
     def _execute_entry(self, candidate: VMAACandidate, date_str: str,
@@ -778,7 +845,16 @@ class BacktestEngine:
         kelly = max(0, min(kelly, 0.25))
 
         portfolio_value = self.portfolio.equity
-        risk_capital = portfolio_value * kelly * self.config.kelly_fraction * scalar
+        # Adaptive Kelly: aggressive in bull, conservative in bear
+        market_ok = self._market_regime.get("market_ok", True)
+        vol_regime = self._market_regime.get("vol_regime", "NORMAL")
+        if market_ok and vol_regime == "LOW":
+            kelly_frac = self.config.kelly_fraction_bull
+        elif not market_ok:
+            kelly_frac = self.config.kelly_fraction_bear
+        else:
+            kelly_frac = self.config.kelly_fraction
+        risk_capital = portfolio_value * kelly * kelly_frac * scalar
         raw_qty = int(risk_capital / risk_per_share) if risk_per_share > 0 else 0
 
         # Allocation-based limit
@@ -985,6 +1061,16 @@ class BacktestEngine:
             is_win=exit_price > pos.entry_price,
         )
         self.trades.append(trade)
+
+        # Track hard stops for repeat-offender + sector streak filters
+        if "hard_stop" in reason:
+            self._hard_stopped_tickers[ticker] = date_str
+            sector_name = pos.sector
+            self._sector_hs_streak[sector_name] = self._sector_hs_streak.get(sector_name, 0) + 1
+        else:
+            sector_name = pos.sector
+            if sector_name in self._sector_hs_streak and self._sector_hs_streak[sector_name] > 0:
+                self._sector_hs_streak[sector_name] = 0
 
         logger.debug(f"    SELL {ticker:6s} ${exit_price:.2f} "
                     f"PnL=${trade.net_pnl:,.0f} ({trade.return_pct:+.1f}%) [{reason}]")
