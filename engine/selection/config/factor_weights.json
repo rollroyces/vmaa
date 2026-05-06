@@ -1,0 +1,92 @@
+{
+  "_description": "Factor weights for composite scoring. All weights are relative — they will be normalized to sum to 1.0 within each category if use_layer_weights is true.",
+  "_version": "1.0.0",
+
+  "use_layer_weights": true,
+  "layer_weights": {
+    "value": 0.20,
+    "quality": 0.25,
+    "growth": 0.15,
+    "momentum": 0.15,
+    "volatility": 0.10,
+    "size": 0.15
+  },
+
+  "factors": {
+    "value": {
+      "pe_ratio": 0.25,
+      "pb_ratio": 0.20,
+      "ps_ratio": 0.15,
+      "ev_ebitda": 0.20,
+      "fcf_yield": 0.20
+    },
+    "quality": {
+      "roe": 0.25,
+      "roa": 0.20,
+      "profit_margin": 0.20,
+      "debt_to_equity": 0.15,
+      "fcf_conversion": 0.20
+    },
+    "growth": {
+      "revenue_growth_yoy": 0.30,
+      "revenue_growth_qoq": 0.10,
+      "eps_growth_yoy": 0.30,
+      "eps_growth_qoq": 0.10,
+      "ebitda_growth": 0.20
+    },
+    "momentum": {
+      "return_1m": 0.25,
+      "return_3m": 0.25,
+      "return_6m": 0.20,
+      "return_12m": 0.15,
+      "rs_ratio": 0.10,
+      "ma_crossover": 0.05
+    },
+    "volatility": {
+      "beta": 0.30,
+      "volatility_20d": 0.35,
+      "volatility_50d": 0.35
+    },
+    "size": {
+      "market_cap": 0.65,
+      "enterprise_value": 0.35
+    }
+  },
+
+  "factor_directions": {
+    "_description": "1 = higher is better, -1 = lower is better (for Z-score sign flip)",
+    "pe_ratio": -1,
+    "pb_ratio": -1,
+    "ps_ratio": -1,
+    "ev_ebitda": -1,
+    "fcf_yield": 1,
+    "roe": 1,
+    "roa": 1,
+    "profit_margin": 1,
+    "debt_to_equity": -1,
+    "fcf_conversion": 1,
+    "revenue_growth_yoy": 1,
+    "revenue_growth_qoq": 1,
+    "eps_growth_yoy": 1,
+    "eps_growth_qoq": 1,
+    "ebitda_growth": 1,
+    "return_1m": 1,
+    "return_3m": 1,
+    "return_6m": 1,
+    "return_12m": 1,
+    "rs_ratio": 1,
+    "ma_crossover": 1,
+    "beta": -1,
+    "volatility_20d": -1,
+    "volatility_50d": -1,
+    "market_cap": 0,
+    "enterprise_value": 0
+  },
+
+  "scoring": {
+    "method": "percentile",
+    "zscore_clip": 3.0,
+    "percentile_buckets": 100,
+    "min_observations": 30
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "monitor": {
+    "mode": "DAEMON",
+    "check_interval_seconds": 300,
+    "market_open_check": false,
+    "log_level": "INFO",
+    "log_file": "engine/data/monitor.log",
+    "metrics_enabled": true,
+    "persist_state": true,
+    "state_file": "engine/data/monitor_state.json"
+  },
+  "alerts": {
+    "enabled": true,
+    "cooldown_default_hours": 4,
+    "cooldown_by_priority": {
+      "CRITICAL": 0.5,
+      "HIGH": 2,
+      "MEDIUM": 6,
+      "LOW": 24
+    },
+    "price_level_buffer_pct": 0.002,
+    "volume_spike_multiplier": 3.0,
+    "volume_lookback_days": 20,
+    "change_threshold_pct": 5.0,
+    "ma_periods": [50, 200],
+    "rsi_period": 14,
+    "rsi_overbought": 70,
+    "rsi_oversold": 30
+  },
+  "orders": {
+    "enabled": true,
+    "orders_dir": "engine/data/orders",
+    "history_file": "engine/data/orders/history.json",
+    "auto_execute": false,
+    "max_slippage_pct": 0.02,
+    "trailing_stop_default_pct": 0.08,
+    "trailing_stop_default_distance": 0.05,
+    "time_stop_default_days": 90,
+    "take_profit_tiers": [
+      {"pct": 0.15, "sell_pct": 30, "label": "TP1"},
+      {"pct": 0.25, "sell_pct": 30, "label": "TP2"},
+      {"pct": 0.40, "sell_pct": 40, "label": "TP3"}
+    ]
+  },
+  "anomaly": {
+    "enabled": true,
+    "gap_threshold_pct": 3.0,
+    "flash_crash_threshold_pct": 5.0,
+    "flash_crash_window_minutes": 5,
+    "volume_anomaly_multiplier": 10.0,
+    "spread_widening_pct": 2.0,
+    "pnl_std_multiplier": 2.0,
+    "pnl_lookback_days": 60,
+    "correlation_break_threshold": 0.30,
+    "correlation_lookback_days": 120,
+    "correlation_recent_days": 20,
+    "sector_lookback_days": 60,
+    "missing_data_hours": 1,
+    "stale_cache_minutes": 15,
+    "stale_cache_check_sample": 5
+  },
+  "notify": {
+    "enabled": true,
+    "channels": ["console", "file"],
+    "rate_limit_per_hour": 60,
+    "quiet_hours": {
+      "enabled": true,
+      "start_utc": "22:00",
+      "end_utc": "06:00",
+      "weekend_silence": true,
+      "quiet_priority_floor": "HIGH"
+    },
+    "templates": {
+      "PRICE_LEVEL": "🔔 {priority} Price Alert: {ticker} {direction} ${target_price:.2f} (current: ${current_price:.2f})",
+      "CHANGE_THRESHOLD": "📊 {priority} Change Alert: {ticker} {change_pct:+.2f}% (threshold: {threshold_pct:.1f}%)",
+      "VOLUME_SPIKE": "📈 {priority} Volume Spike: {ticker} {volume_ratio:.1f}x avg volume ({volume:,} vs avg {avg_volume:,.0f})",
+      "BREAKOUT": "🚀 {priority} Breakout: {ticker} broke {level_type} ${level_value:.2f} (price: ${current_price:.2f})",
+      "TECHNICAL_CROSSOVER": "⚡ {priority} Technical: {ticker} {indicator} {signal_type}",
+      "ANOMALY": "⚠️ {priority} Anomaly: {anomaly_type} detected — {description}",
+      "ORDER_TRIGGERED": "🎯 Order Triggered: {order_id} {order_type} {action} {quantity} {ticker} @ ${trigger_price:.2f}",
+      "ORDER_FILLED": "✅ Order Filled: {order_id} {action} {filled_quantity}/{quantity} {ticker} @ ${filled_price:.2f}",
+      "ORDER_EXPIRED": "⏰ Order Expired: {order_id} {order_type} {ticker}"
+    },
+    "file_log": "engine/data/notifications.log"
+  }
+}

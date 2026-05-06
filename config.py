@@ -30,8 +30,8 @@ class Part1Config:
     #                 >= turnaround_max_cap → REJECTED
 
     # ── 2. Quality: B/M Ratio ──
-    min_bm_ratio: float = 0.3                 # Minimum Book-to-Market (deep value)
-    target_bm_ratio: float = 0.8              # Target B/M (strong value)
+    min_bm_ratio: float = 0.20                # Minimum Book-to-Market (was 0.3 — relaxed for mid-cap tech/growth)
+    target_bm_ratio: float = 0.60             # Target B/M (was 0.8)
 
     # ── 3. Quality: ROA ──
     min_roa: float = 0.0                      # Minimum ROA (must be profitable)
@@ -42,16 +42,16 @@ class Part1Config:
     target_ebitda_margin: float = 0.15        # Target 15%+
 
     # ── 5. Cash Flow: FCF Yield ──
-    min_fcf_yield: float = 0.03               # Minimum 3% FCF yield
-    target_fcf_yield: float = 0.08            # Target 8%+ (strong cash generator)
+    min_fcf_yield: float = 0.02               # Minimum 2% FCF yield (was 3% — more inclusive in bull markets)
+    target_fcf_yield: float = 0.06            # Target 6%+ (was 8%)
 
     # ── 6. Cash Flow: FCF Conversion (Earnings Authenticity) ──
     min_fcf_conversion: float = 0.50          # FCF/NI >= 50% (earnings have substance)
     target_fcf_conversion: float = 0.80       # Target 80%+ (high quality earnings)
 
     # ── 7. Safety Margin: Price / 52-week Low ──
-    max_ptl_ratio: float = 1.30               # Max 30% above 52w-low
-    target_ptl_ratio: float = 1.10            # Target within 10% of 52w-low
+    max_ptl_ratio: float = 1.50               # Max 50% above 52w-low (was 30% — bull market adjustment)
+    target_ptl_ratio: float = 1.20            # Target within 20% of 52w-low (was 10%)
 
     # ── 8. Asset Expansion Constraint ──
     # ΔAssets < ΔEarnings → capital-efficient growth
@@ -74,11 +74,11 @@ class Part1Config:
     max_avg_volume: int = 50_000_000          # Cap for liquidity check
 
     # ── Scoring Weights (for quality_score) ──
-    weight_bm: float = 0.20
+    weight_bm: float = 0.15              # Reduced from 0.20 to make room for FCF conversion (core metric)
     weight_roa: float = 0.15
     weight_ebitda: float = 0.10
-    weight_fcf_yield: float = 0.20
-    weight_fcf_conversion: float = 0.10
+    weight_fcf_yield: float = 0.15       # Reduced from 0.20 to make room for FCF conversion
+    weight_fcf_conversion: float = 0.20  # Raised from 0.10 — FCF/NI is 核心 (core) per spec review
     weight_ptl: float = 0.15
     weight_asset_efficiency: float = 0.10
 
@@ -104,11 +104,12 @@ class Part2Config:
 
     # ── G: Gap Up ──
     gap_min_pct: float = 0.04                 # Gap ≥ 4%
-    gap_premarket_vol_min: int = 100_000      # Pre-market volume ≥ 100K
+    gap_premarket_vol_min: int = 100_000      # Pre-market volume ≥ 100K (DEPRECATED: yfinance never returns this)
+    gap_volume_multiplier: float = 1.5        # Gap day volume must be ≥ 1.5x 20-day avg (replaces broken preMarketVolume)
     gap_lookback_days: int = 20               # Look back 20 trading days
 
     # ── N: Neglect / Base Pattern ──
-    base_min_months: float = 3.0              # Minimum 3 months in base
+    base_min_months: float = 6.0              # Minimum 6 months in base (was 3.0 — spec says 數月至數年, not weeks)
     base_max_range_pct: float = 0.30          # Price range ≤ 30% within base
     base_vol_decline_pct: float = 0.30        # Volume decline from early base
 
@@ -174,11 +175,11 @@ class RiskConfig:
     min_avg_volume: int = 50000
 
     # Stop management
-    atr_stop_multiplier: float = 2.0
-    hard_stop_pct: float = 0.10
-    trailing_stop_pct: float = 0.08
-    trailing_activate_after: float = 0.10
-    time_stop_days: int = 60
+    atr_stop_multiplier: float = 2.5            # Was 2.0 — wider to avoid being stopped out by noise
+    hard_stop_pct: float = 0.15                # Was 10% — widened to 15% (backtest showed 63% hard-stop loss rate)
+    trailing_stop_pct: float = 0.10            # Was 8% — slight widen for momentum trades
+    trailing_activate_after: float = 0.12       # Was 10% — need more room before trailing
+    time_stop_days: int = 90                   # Was 60 — more time for mean-reversion to play out
 
     # Market conditions
     vix_proxy_threshold: float = 0.25

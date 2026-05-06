@@ -37,16 +37,26 @@ logger = logging.getLogger("vmaa.part1")
 # Public API
 # ═══════════════════════════════════════════════════════════════════
 
-def screen_fundamentals(ticker: str, sector_medians: dict = None) -> Optional[Part1Result]:
+def screen_fundamentals(ticker: str, sector_medians: dict = None,
+                        prefetched: dict = None) -> Optional[Part1Result]:
     """
     Screen a single stock through all Part 1 criteria.
     Optionally uses sector_medians for relative quality comparison (C2).
+    If prefetched is provided, uses cached yfinance objects to avoid re-fetch.
+        prefetched = {'info': dict, 'hist': DataFrame, 'ticker': yf.Ticker}
     Returns Part1Result if it passes, None if rejected.
     """
     try:
-        t = yf.Ticker(ticker)
-        info = t.info
-        hist = t.history(period="1y")
+        if prefetched:
+            info = prefetched.get('info', {})
+            hist = prefetched.get('hist')
+            t = prefetched.get('ticker')
+            if t is None:
+                t = yf.Ticker(ticker)
+        else:
+            t = yf.Ticker(ticker)
+            info = t.info
+            hist = t.history(period="1y")
 
         if not _basic_checks(info, hist):
             return None
@@ -157,8 +167,8 @@ def _check_quality(info: dict, price: float, sector_medians: dict = None) -> Dic
         bm = book_value / price
         result['bm'] = round(bm, 4)
         if sm and sm.get('bm'):
-            # Must be above sector median (顯著高於同業)
-            result['bm_pass'] = bm >= sm['bm']
+            # Must be significantly above sector median (≥10% premium for 顯著高於)
+            result['bm_pass'] = bm >= sm['bm'] * 1.1
         else:
             result['bm_pass'] = bm >= P1C.min_bm_ratio
 
@@ -167,7 +177,7 @@ def _check_quality(info: dict, price: float, sector_medians: dict = None) -> Dic
     if roa is not None:
         result['roa'] = round(float(roa), 4)
         if sm and sm.get('roa') is not None:
-            result['roa_pass'] = result['roa'] >= sm['roa']
+            result['roa_pass'] = result['roa'] >= sm['roa'] * 1.1
         else:
             result['roa_pass'] = result['roa'] >= P1C.min_roa
 
@@ -178,7 +188,7 @@ def _check_quality(info: dict, price: float, sector_medians: dict = None) -> Dic
         ebitda_margin = ebitda / revenue
         result['ebitda_margin'] = round(ebitda_margin, 4)
         if sm and sm.get('ebitda_margin') is not None:
-            result['ebitda_pass'] = ebitda_margin >= sm['ebitda_margin']
+            result['ebitda_pass'] = ebitda_margin >= sm['ebitda_margin'] * 1.1
         else:
             result['ebitda_pass'] = ebitda_margin >= P1C.min_ebitda_margin
 

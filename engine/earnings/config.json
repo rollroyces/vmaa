@@ -1,0 +1,31 @@
+{
+  "scoring": {
+    "consensus_rating_weight": 0.30,
+    "surprise_history_weight": 0.25,
+    "estimate_revision_weight": 0.25,
+    "dispersion_weight": 0.20
+  },
+  "surprise": {
+    "lookback_quarters": 8,
+    "short_lookback_quarters": 4,
+    "material_threshold_pct": 0.02
+  },
+  "consensus": {
+    "min_analysts_for_confidence": 3,
+    "max_dispersion_for_confidence": 0.15
+  },
+  "rating_changes": {
+    "revision_window_days_1w": 7,
+    "revision_window_days_1m": 30,
+    "revision_window_days_3m": 90
+  },
+  "cache": {
+    "ttl_seconds": 21600,
+    "data_dir": "engine/data/earnings"
+  },
+  "output": {
+    "decimal_places_score": 2,
+    "decimal_places_pct": 4,
+    "decimal_places_price": 2
+  }
+}

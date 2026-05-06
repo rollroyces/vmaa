@@ -1,0 +1,30 @@
+{
+  "volume_profile": {
+    "bins": 52,
+    "lookback_days": 252,
+    "value_area_pct": 0.70
+  },
+  "concentration": {
+    "top_n": 5,
+    "hhi_normalization": true
+  },
+  "cost_basis": {
+    "lookback_days": 252,
+    "impulse_days": 5,
+    "marginal_days": 20
+  },
+  "profitability": {
+    "cmf_period": 21
+  },
+  "support_resistance": {
+    "min_cluster_gap_pct": 0.02,
+    "top_clusters": 5
+  },
+  "data_source": {
+    "default_period": "1y",
+    "min_data_points": 60
+  },
+  "output": {
+    "decimal_places": 4
+  }
+}

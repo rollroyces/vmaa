@@ -41,16 +41,26 @@ logger = logging.getLogger("vmaa.part2")
 # Public API
 # ═══════════════════════════════════════════════════════════════════
 
-def screen_magna(ticker: str, part1: Optional[Part1Result] = None) -> Optional[Part2Signal]:
+def screen_magna(ticker: str, part1: Optional[Part1Result] = None,
+                 prefetched: dict = None) -> Optional[Part2Signal]:
     """
     Run full MAGNA 53/10 screening on a single stock.
     If part1 is provided, skips market cap and IPO checks (already done).
+    If prefetched is provided, uses cached yfinance objects to avoid re-fetch.
+        prefetched = {'info': dict, 'hist': DataFrame, 'ticker': yf.Ticker}
     Returns Part2Signal with scores and trigger assessment.
     """
     try:
-        t = yf.Ticker(ticker)
-        info = t.info
-        hist = t.history(period="1y")
+        if prefetched:
+            info = prefetched.get('info', {})
+            hist = prefetched.get('hist')
+            t = prefetched.get('ticker')
+            if t is None:
+                t = yf.Ticker(ticker)
+        else:
+            t = yf.Ticker(ticker)
+            info = t.info
+            hist = t.history(period="1y")
 
         if hist is None or len(hist) < 60:
             logger.debug(f"  {ticker}: Insufficient price history for Part 2")
@@ -200,12 +210,19 @@ def _check_gap_up(hist: pd.DataFrame, info: dict) -> Tuple[bool, bool, float, in
     """
     Detect gap-up events:
       Condition 1: Gap > 4% (open > prev close by 4%+)
-      Condition 2: Pre-market volume > 100K shares
+      Condition 2: Gap day volume ≥ 1.5x the 20-day average volume
+
+    FIXED (2026-05): Previously checked info.get('preMarketVolume')
+    which yfinance NEVER returns (always 0/None), making G trigger
+    effectively broken. Now uses the gap day's actual total volume
+    vs its 20-day average — a genuine gap-up should have elevated volume.
     
-    Returns: (gap_detected, premarket_vol_ok, gap_pct, premarket_volume)
+    Returns: (gap_detected, volume_confirmed, gap_pct, gap_day_volume)
     """
     gap_detected = False
     gap_pct = 0.0
+    gap_day_volume = 0
+    volume_confirmed = False
     lookback = min(P2C.gap_lookback_days, len(hist) - 1)
 
     recent = hist.tail(lookback + 1)
@@ -217,14 +234,18 @@ def _check_gap_up(hist: pd.DataFrame, info: dict) -> Tuple[bool, bool, float, in
             if gap >= P2C.gap_min_pct:
                 gap_detected = True
                 gap_pct = max(gap_pct, gap)
-                # Store the gap day for volume check
+                # Get the gap day's volume
+                gap_day_volume = int(recent['Volume'].iloc[i])
+                # Check if gap day volume ≥ 1.5x 20-day average
+                # (replaces broken preMarketVolume check)
+                vol_window = recent['Volume'].iloc[max(0, i-20):i]
+                if len(vol_window) >= 5:
+                    avg_vol_20d = float(vol_window.mean())
+                    if avg_vol_20d > 0:
+                        volume_confirmed = gap_day_volume >= avg_vol_20d * P2C.gap_volume_multiplier
                 break
 
-    # Pre-market volume
-    premarket_vol = info.get('preMarketVolume', 0) or 0
-    premarket_vol_ok = premarket_vol >= P2C.gap_premarket_vol_min
-
-    return gap_detected, premarket_vol_ok, round(gap_pct, 4), premarket_vol
+    return gap_detected, volume_confirmed, round(gap_pct, 4), gap_day_volume
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -405,8 +426,8 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
         trigger_signals.append('A')
 
     # ── G: Gap Up ──
-    g_pass, g_vol_ok, gap_pct, premarket_vol = _check_gap_up(hist, info)
-    # Only award points and trigger if BOTH gap AND premarket volume conditions met (per spec)
+    g_pass, g_vol_ok, gap_pct, gap_vol = _check_gap_up(hist, info)
+    # Only award points and trigger if BOTH gap AND volume conditions met
     g_full_pass = g_pass and g_vol_ok
     if g_pass:
         trigger_signals.append('G')
@@ -478,7 +499,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
         revenue_growth_prev_qoq=rev_prev,
         revenue_acceleration=rev_accel,
         gap_pct=gap_pct,
-        premarket_volume=premarket_vol,
+        premarket_volume=gap_vol,
         short_ratio=short_ratio,
         short_pct_float=short_pct,
         base_duration_months=base_duration,

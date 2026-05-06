@@ -19,6 +19,10 @@ from models import (
     MarketRegime, Part1Result, Part2Signal, VMAACandidate, TradeDecision
 )
 
+# Adaptive stop (Phase 1 — 2026-05-06)
+# Dynamically adjusts stop distance based on price level, volatility, market regime
+from risk_adaptive import compute_stops_adaptive as compute_stops
+
 logger = logging.getLogger("vmaa.risk")
 
 
@@ -88,7 +92,13 @@ def compute_position_size(
     market: MarketRegime,
 ) -> Tuple[int, float, float]:
     """
-    Compute position size using Quarter-Kelly criterion.
+    Compute position size using Fixed Fractional sizing.
+    
+    Changed from Quarter-Kelly to Fixed Fractional because:
+    - Kelly was double-penalizing (win_prob=0.5*confidence + quarter-kelly)
+    - Result: confidence < 67% always produced 0 shares 
+    - Fixed fractional: 1.5% base risk * confidence multiplier
+    - Confidence >= 35% guarantees a position
     
     Returns: (quantity, position_pct, risk_capital)
     """
@@ -97,16 +107,15 @@ def compute_position_size(
     if risk_per_share <= 0:
         risk_per_share = entry_price * 0.05  # Fallback 5%
 
-    # Kelly: f* = (payout * win_prob - loss_prob) / payout
-    win_prob = 0.50 * confidence  # Scale by confidence
-    payout_ratio = 2.0  # Assume 2:1 reward:risk
-    kelly = (payout_ratio * win_prob - (1 - win_prob)) / payout_ratio
-    kelly = max(0, min(kelly, 0.25))  # Cap at quarter-Kelly
-
-    risk_capital = portfolio_value * kelly * RC.kelly_fraction
+    # Fixed Fractional: base_risk% * confidence scalar
+    base_risk_pct = 0.015  # 1.5% of portfolio per trade
+    confidence_scalar = max(0.35, min(confidence, 1.0))  # 0.35 - 1.0x
+    risk_pct = base_risk_pct * confidence_scalar
+    
+    risk_capital = portfolio_value * risk_pct
     raw_shares = int(risk_capital / risk_per_share) if risk_per_share > 0 else 0
 
-    # Allocation-based sizing
+    # Allocation-based sizing (cap at max_position_pct)
     max_alloc = portfolio_value * RC.max_position_pct
     alloc_shares = int(max_alloc / entry_price) if entry_price > 0 else 0
 
@@ -116,11 +125,11 @@ def compute_position_size(
     quantity = min(raw_shares, alloc_shares, adj_shares)
     quantity = max(1, min(quantity, 10000))
 
-    # Min/max checks
+    # Min/max position checks
     position_value = quantity * entry_price
     if position_value < RC.min_position_size:
         quantity = 0
-    if position_value > RC.max_position_size:
+    elif position_value > RC.max_position_size:
         quantity = int(RC.max_position_size / entry_price)
 
     position_pct = (quantity * entry_price / portfolio_value * 100) if portfolio_value > 0 else 0
@@ -138,14 +147,20 @@ def compute_stops(
     hist: pd.DataFrame,
 ) -> Tuple[float, str]:
     """
-    Compute optimal stop loss using 3 methods, pick the tightest valid one.
+    Compute optimal stop loss using 3 methods, pick the median one.
+
+    FIXED (2026-05): Previously picked the tightest (closest to entry)
+    stop, which caused 63% hard-stop loss rate in backtests. Tight stops
+    get triggered by normal volatility before mean-reversion can play out.
+    Now picks the median stop — balances protection with breathing room.
+
     Returns: (stop_price, stop_type)
     """
-    # 1. ATR-based stop
+    # 1. ATR-based stop (2.5x multiplier from config)
     atr = _compute_atr(hist, 14)
     atr_stop = round(entry_price - (atr * RC.atr_stop_multiplier), 2) if atr > 0 else 0
 
-    # 2. Hard stop (10% below entry)
+    # 2. Hard stop (15% below entry)
     hard_stop = round(entry_price * (1 - RC.hard_stop_pct), 2)
 
     # 3. Structural stop (below 52w low)
@@ -153,12 +168,17 @@ def compute_stops(
 
     candidates = [(atr_stop, "ATR"), (hard_stop, "Hard"), (structural_stop, "Structural")]
     candidates = [(s, n) for s, n in candidates if s > 0 and s < entry_price]
-    candidates.sort(key=lambda x: x[0], reverse=True)
 
-    if candidates:
-        return candidates[0]
-    else:
+    if not candidates:
         return round(entry_price * 0.95, 2), "Fallback"
+
+    # Pick the MEDIAN stop (not the tightest):
+    # Tightest stop = lowest entry-to-stop distance = highest stop price
+    # Widest stop = highest entry-to-stop distance = lowest stop price
+    # Median balances protection vs breathing room — allows mean-reversion time
+    candidates.sort(key=lambda x: x[0])  # ascending by price
+    median_idx = len(candidates) // 2
+    return candidates[median_idx]
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -330,7 +350,8 @@ def generate_trade_decision(
     )
 
     # ── Stop Loss ──
-    stop_loss, stop_type = compute_stops(entry_price, p1.low_52w, hist)
+    # Use adaptive stop (Phase 1) — adjusts for price level, volatility, regime
+    stop_loss, stop_type = compute_stops(entry_price, p1.low_52w, hist, market)
 
     # ── Take Profits ──
     take_profits = compute_take_profits(entry_price, market)

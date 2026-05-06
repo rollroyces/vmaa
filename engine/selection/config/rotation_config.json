@@ -1,0 +1,91 @@
+{
+  "_description": "Auto rotation configuration — strategies, triggers, and limits.",
+  "_version": "1.0.0",
+
+  "strategies": {
+    "score_based": {
+      "enabled": true,
+      "description": "Replace lowest-ranked stocks with highest-ranked candidates",
+      "replacement_ratio": 0.20,
+      "min_score_gap": 0.10,
+      "max_replacements_per_cycle": 5,
+      "grace_period_days": 7
+    },
+    "sector_balance": {
+      "enabled": true,
+      "description": "Maintain sector allocation limits, rotate out overweights",
+      "max_sector_weight_pct": 25.0,
+      "min_sector_weight_pct": 0.0,
+      "target_sectors": [
+        "Technology",
+        "Healthcare",
+        "Financial Services",
+        "Consumer Cyclical",
+        "Industrials",
+        "Consumer Defensive",
+        "Energy",
+        "Basic Materials",
+        "Real Estate",
+        "Communication Services",
+        "Utilities"
+      ],
+      "equal_weight_preference": true,
+      "rebalance_tolerance_pct": 5.0
+    },
+    "volatility_adjusted": {
+      "enabled": true,
+      "description": "Reduce positions during high volatility regimes",
+      "high_vol_threshold": 0.30,
+      "normal_vol_threshold": 0.20,
+      "high_vol_position_scalar": 0.50,
+      "elevated_vol_position_scalar": 0.75,
+      "vol_lookback_days": 20,
+      "smoothing_window": 5
+    }
+  },
+
+  "triggers": {
+    "scheduled": {
+      "daily": {"enabled": false, "time_utc": "13:30"},
+      "weekly": {"enabled": true, "day": "monday", "time_utc": "13:00"},
+      "monthly": {"enabled": true, "day_of_month": 1, "time_utc": "13:00"}
+    },
+    "event_driven": {
+      "enabled": true,
+      "events": [
+        "new_earnings_report",
+        "significant_price_move_5pct",
+        "volume_spike_3x",
+        "sector_rotation_signal",
+        "market_regime_change"
+      ],
+      "cooldown_minutes": 60,
+      "max_events_per_day": 10
+    },
+    "performance_driven": {
+      "enabled": true,
+      "check_interval_hours": 24,
+      "triggers": {
+        "pool_drawdown_pct": 10.0,
+        "individual_drawdown_pct": 20.0,
+        "sharpe_below": 0.0,
+        "turnover_exceeds_pct": 50.0
+      }
+    }
+  },
+
+  "logging": {
+    "enabled": true,
+    "log_rotation_decisions": true,
+    "log_slippage_estimates": true,
+    "log_turnover_rate": true,
+    "history_retention_days": 365
+  },
+
+  "slippage": {
+    "estimate_method": "spread_based",
+    "default_spread_bps": 10.0,
+    "volume_impact_factor": 0.1,
+    "max_participation_rate": 10.0
+  }
+}

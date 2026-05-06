@@ -1,0 +1,132 @@
+{
+  "timestamp": "2026-05-05T23:04:53.036749+00:00",
+  "tickers_scanned": 3,
+  "scores": [
+    {
+      "ticker": "AAPL",
+      "score": 55.0,
+      "grade": "C",
+      "sub_scores": {
+        "consensus_rating": {
+          "score": 75.0,
+          "weight": 0.3,
+          "contribution": 22.5
+        },
+        "surprise_history": {
+          "score": 80.0,
+          "weight": 0.25,
+          "contribution": 20.0
+        },
+        "estimate_revisions": {
+          "score": 50.0,
+          "weight": 0.25,
+          "contribution": 12.5
+        },
+        "dispersion_consistency": {
+          "score": 0.0,
+          "weight": 0.2,
+          "contribution": 0.0
+        }
+      },
+      "consensus_summary": {
+        "rating": "BUY",
+        "target_premium": 0.0675,
+        "analysts": 42,
+        "confidence": "high"
+      },
+      "_meta": {
+        "collected_at": "2026-05-05T23:04:51.164283+00:00"
+      }
+    },
+    {
+      "ticker": "MSFT",
+      "score": 55.0,
+      "grade": "C",
+      "sub_scores": {
+        "consensus_rating": {
+          "score": 75.0,
+          "weight": 0.3,
+          "contribution": 22.5
+        },
+        "surprise_history": {
+          "score": 80.0,
+          "weight": 0.25,
+          "contribution": 20.0
+        },
+        "estimate_revisions": {
+          "score": 50.0,
+          "weight": 0.25,
+          "contribution": 12.5
+        },
+        "dispersion_consistency": {
+          "score": 0.0,
+          "weight": 0.2,
+          "contribution": 0.0
+        }
+      },
+      "consensus_summary": {
+        "rating": "BUY",
+        "target_premium": 0.3609,
+        "analysts": 53,
+        "confidence": "high"
+      },
+      "_meta": {
+        "collected_at": "2026-05-05T23:04:52.176045+00:00"
+      }
+    },
+    {
+      "ticker": "GOOGL",
+      "score": 55.0,
+      "grade": "C",
+      "sub_scores": {
+        "consensus_rating": {
+          "score": 75.0,
+          "weight": 0.3,
+          "contribution": 22.5
+        },
+        "surprise_history": {
+          "score": 80.0,
+          "weight": 0.25,
+          "contribution": 20.0
+        },
+        "estimate_revisions": {
+          "score": 50.0,
+          "weight": 0.25,
+          "contribution": 12.5
+        },
+        "dispersion_consistency": {
+          "score": 0.0,
+          "weight": 0.2,
+          "contribution": 0.0
+        }
+      },
+      "consensus_summary": {
+        "rating": "BUY",
+        "target_premium": 0.0857,
+        "analysts": 52,
+        "confidence": "high"
+      },
+      "_meta": {
+        "collected_at": "2026-05-05T23:04:53.036673+00:00"
+      }
+    }
+  ],
+  "errors": [],
+  "summary": {
+    "tickers_scanned": 3,
+    "tickers_with_data": 3,
+    "tickers_with_errors": 0,
+    "avg_score": 55.0,
+    "median_score": 55.0,
+    "max_score": 55.0,
+    "min_score": 55.0,
+    "grade_distribution": {
+      "A": 0,
+      "B": 0,
+      "C": 3,
+      "D": 0,
+      "F": 0
+    },
+    "elapsed_seconds": 3.3
+  }
+}

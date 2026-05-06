@@ -1,0 +1,223 @@
+{
+  "pipeline_meta": {
+    "version": "3.0.0",
+    "timestamp": "2026-05-05T16:00:54Z",
+    "mode": "full",
+    "engines_loaded": {
+      "selection": "loaded",
+      "technical": "loaded",
+      "chip": "loaded",
+      "risk": "loaded",
+      "monitor": "not_loaded"
+    },
+    "stages": {
+      "data": {
+        "tickers_with_price": 3,
+        "tickers_with_fundamentals": 3
+      },
+      "quality": {
+        "screened": 1,
+        "passed": 1,
+        "failed": 0,
+        "all_results": [
+          {
+            "ticker": "MNDY",
+            "quality_score": 0.5065,
+            "quality_passed": true,
+            "fcf_yield": 0.066,
+            "bm_ratio": 0.3271,
+            "roa": -0.0006,
+            "price": 75.155
+          }
+        ],
+        "raw_pool": [
+          "Part1Result(ticker='MNDY', name='monday.com Ltd.', sector='Technology', industry='Software - Application', market_cap=3870483968, market_cap_type='turnaround', current_price=75.08, low_52w=57.5, high_52w=316.98, ptl_ratio=1.3057, bm_ratio=0.3271, roa=-0.0006, roe=0.1043, ebitda_margin=0.0067, fcf_yield=0.066, fcf_conversion=2.0, asset_growth=0.2498, earnings_growth=2.668, asset_vs_earnings='asset<earnings', debt_to_equity=13.54, beta=1.16, interest_rate_sensitive=True, quality_score=0.5065, passed_criteria=['cap_turnaround', 'roa', 'fcf_yield', 'safety_margin', 'asset_efficiency', 'ir_sensitive', 'earnings_authenticity'], failed_criteria=['bm', 'ebitda'], warnings=['IR_sensitive(D/E=13.54,β=1.16)'], rationale='Q=51% | Cap=turnaround($3.9B) | B/M=0.33 | ROA=-0.1% | FCF/Y=6.6% | PTL=1.31x | A<EG✓ | IR+ | FCF/NI=2.0', data_date='2026-05-05')"
+        ],
+        "engine_used": "part1_fundamentals.batch_screen"
+      },
+      "magna": {
+        "screened": 1,
+        "passed": 1,
+        "failed": 0,
+        "all_results": [
+          {
+            "ticker": "MNDY",
+            "magna_score": 3,
+            "magna_passed": true,
+            "eps_growth": 0.0,
+            "revenue_growth": 0.0,
+            "has_gap": false,
+            "in_base": false,
+            "price": 75.155
+          }
+        ],
+        "engine_used": "part2_magna.batch_screen_magna"
+      },
+      "composite": {
+        "candidates": 1,
+        "score_range": {
+          "min": 0.564,
+          "max": 0.564,
+          "avg": 0.564
+        }
+      }
+    },
+    "universe_source": "custom",
+    "stage_times": {
+      "universe": 0.0,
+      "market": 0.6,
+      "data": 0.8,
+      "quality": 1.5,
+      "magna": 0.4,
+      "technical": 0.1,
+      "chip": 0.3,
+      "earnings": 0.5,
+      "composite": 0.0,
+      "risk": 0.0,
+      "decisions": 0.0,
+      "monitor": 0.0
+    },
+    "total_elapsed_seconds": 4.2
+  },
+  "market": {
+    "spy": 723.1,
+    "spy_change_5d": 0.016,
+    "spy_change_20d": 0.0969,
+    "vix_proxy": 0.1223,
+    "regime": "BULLISH",
+    "above_50ma": true,
+    "above_200ma": true,
+    "spy_ma50": 680.94,
+    "spy_ma200": 668.92
+  },
+  "pipeline_summary": {
+    "scanned": 3,
+    "quality": 1,
+    "signals": 1,
+    "entry_ready": 1
+  },
+  "engines": {
+    "technical": {
+      "enabled": true,
+      "stocks_analyzed": 1,
+      "signals": {},
+      "error": null
+    },
+    "chip": {
+      "enabled": true,
+      "stocks_analyzed": 1,
+      "signals": {
+        "MNDY": {
+          "current_price": 75.08,
+          "below_vwap": true,
+          "support_level": 70.9133,
+          "resistance_level": 75.7467,
+          "concentration_score": null,
+          "profitability_rating": null
+        }
+      },
+      "error": null
+    },
+    "earnings": {
+      "enabled": true,
+      "stocks_analyzed": 1,
+      "consensus": {
+        "MNDY": {
+          "recommendation": "buy",
+          "target_mean": 122.64,
+          "target_high": 310.0,
+          "target_low": 75.0,
+          "num_analysts": 25,
+          "earnings_growth": 2.331,
+          "revenue_growth": 0.246,
+          "forward_pe": 14.9317255,
+          "peg_ratio": 0.28,
+          "target_premium_pct": 0.6335
+        }
+      }
+    }
+  },
+  "candidates": [
+    {
+      "ticker": "MNDY",
+      "composite_score": 0.5641,
+      "quality_score": 0.5065,
+      "magna_score": 3,
+      "technical_score": 0.5,
+      "chip_score": 0.65,
+      "earnings_score": 0.95,
+      "price": 75.155,
+      "technical_signal": "UNKNOWN",
+      "chip_rating": null,
+      "analyst_consensus": "buy",
+      "target_premium": 0.6335
+    }
+  ],
+  "risk": {
+    "enabled": true,
+    "risk_score": 21.0,
+    "risk_level": "MODERATE",
+    "var_95": null,
+    "max_dd_pct": null,
+    "circuit_breakers": "OK",
+    "max_position_size": null,
+    "position_sizing": [
+      {
+        "ticker": "MNDY",
+        "entry_price": 0,
+        "stop_loss": 0.0,
+        "risk_per_share": 0.0,
+        "fixed_fractional": {
+          "shares": 0,
+          "position_pct": 0.0,
+          "risk_capital": 56.37
+        },
+        "kelly": {
+          "fraction": 0.1339,
+          "shares": 0,
+          "position_pct": 0.0
+        },
+        "risk_parity": {
+          "weight": 0.0,
+          "shares": 0
+        },
+        "volatility_targeting": {
+          "scale": 1.0,
+          "shares": 0
+        },
+        "recommended": {
+          "method": "fixed_fractional",
+          "shares": 0,
+          "position_pct": 0.0,
+          "risk_capital": 0.0
+        },
+        "override": null,
+        "reasoning": [
+          "Risk/share negative, using fallback 5%",
+          "Fixed fractional: 0.75% risk * confidence=0.50x = $56 risk capital, 0 shares (0.0%)",
+          "Kelly: f*=0.1339, 0 shares (0.0%) (win_prob=72%, W/L=1.5x)",
+          "No drawdown adjustment"
+        ]
+      }
+    ],
+    "error": "'SizingConfig' object has no attribute 'max_risk_per_trade'"
+  },
+  "decisions": [
+    {
+      "ticker": "MNDY",
+      "action": "BUY",
+      "composite_score": 0.5641,
+      "quality": 0.5065,
+      "momentum": 3,
+      "technical": 0.5,
+      "chip": 0.65,
+      "earnings": 0.95,
+      "price": 75.155,
+      "position_size": 0,
+      "reason": "Composite 0.564 — good entry",
+      "technical_signal": "UNKNOWN",
+      "analyst_consensus": "buy",
+      "target_premium": 0.6335
+    }
+  ]
+}

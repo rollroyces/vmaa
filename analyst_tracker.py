@@ -55,17 +55,19 @@ def check_recent_upgrade(ticker: str, current_target: float,
     """
     Check if analyst target has been recently upgraded.
 
+    FIXED (2026-05): Previously returned True on every first observation,
+    giving free +1 MAGNA point to EVERY stock with ≥3 analysts, then again
+    every 14+ days when cache expired. Now requires actual upgrade.
+
     Strategy:
       1. Load cached target from previous run
-      2. If no cache exists, store current target and return True (first observation)
+      2. If no cache exists → store baseline, return False (need baseline first)
       3. If cached target exists, check if current target is ≥5% higher
-      4. Always update cache with current data for next run
-      5. Purge stale (>14 day) entries
+      4. Stale cache (>14 days) → refresh silently, return False (no signal)
+      5. Only return True when actual upgrade detected (current ≥ cached + 5%)
 
-    Returns True if:
-      - First observation (no prior cache) — give benefit of doubt
-      - Current target ≥ 5% higher than cached target
-      - Cache entry is stale (>14 days) — refresh accepted as "recent"
+    Returns True iff: current target ≥ 5% higher than cached target.
+    First observation always returns False (captures baseline only).
     """
     cache = _load_cache()
     now = datetime.now().isoformat()
@@ -76,20 +78,20 @@ def check_recent_upgrade(ticker: str, current_target: float,
         cached_target = entry.get('target', 0)
         cached_time = entry.get('timestamp', '')
 
-        # Purge check: if cached data is >14 days old, treat as fresh observation
+        # Purge check: if cached data is >14 days old, refresh silently (no signal)
         if cached_time:
             try:
                 cached_dt = datetime.fromisoformat(cached_time)
                 if (datetime.now() - cached_dt).days > MAX_CACHE_AGE_DAYS:
                     logger.debug(f"  {ticker}: Analyst cache stale ({MAX_CACHE_AGE_DAYS}+ days), "
-                                 f"accepting as fresh observation")
+                                 f"refreshing baseline (no upgrade signal)")
                     cache[ticker] = {
                         'target': current_target,
                         'analyst_count': current_analyst_count,
                         'timestamp': now,
                     }
                     _save_cache(cache)
-                    return True  # Stale cache → accept as recent
+                    return False  # Stale cache → refresh baseline only, no signal
             except (ValueError, TypeError):
                 pass
 
@@ -107,22 +109,23 @@ def check_recent_upgrade(ticker: str, current_target: float,
                 }
                 _save_cache(cache)
                 return True
+        else:
+            # Cached target = 0 → update baseline
+            cache[ticker] = {
+                'target': current_target,
+                'analyst_count': current_analyst_count,
+                'timestamp': now,
+            }
+            _save_cache(cache)
+            return False
 
-    # Check if this is the first observation (before we overwrite cache)
-    is_first_observation = ticker not in cache
-
-    # Update cache with current data
+    # First observation: establish baseline, no upgrade signal yet
     cache[ticker] = {
         'target': current_target,
         'analyst_count': current_analyst_count,
         'timestamp': now,
     }
     _save_cache(cache)
-
-    # First observation: benefit of doubt (no prior data to compare)
-    if is_first_observation:
-        return True
-
     return False
 
 

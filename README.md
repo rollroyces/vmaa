@@ -1,229 +1,222 @@
-# VMAA 2.0 — Value Mean-reversion Algorithmic Advisor
+# VMAA v3 — Value Mean-reversion Algorithmic Advisor
 
-**Two-stage quantitative pipeline — Quality fundamentals → MAGNA momentum → Risk-managed execution.**
+**Multi-market quantitative trading framework — US + Hong Kong.**
 
-VMAA scans the S&P 500 (or any universe) through a disciplined two-stage filter, then generates risk-calibrated trade decisions with position sizing, stops, and confidence scoring. Built for paper trading on Tiger Trade; live execution is opt-in.
+VMAA is a two-stage value + momentum framework that scans markets through a disciplined quality filter, triggers entries on momentum acceleration, manages risk with adaptive stops, and extends with 6 optional analysis engines (technical, chip, earnings, risk, selection, monitoring).
+
+Built for paper trading on Tiger Trade; live execution is opt-in.
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                  VMAA 2.0 Pipeline                    │
-├──────────────┬──────────────┬──────────────┬─────────┤
-│   Stage 1    │   Stage 2    │    Risk      │ Execute │
-│  Quality     │  Momentum    │  Management  │         │
-│  (Part 1)    │  (Part 2)    │              │         │
-├──────────────┼──────────────┼──────────────┼─────────┤
-│ 7 criteria   │ MAGNA 53/10  │ Kelly sizing │ Tiger   │
-│ Fundamentals │ Entry signal │ Stops + Conf │ Broker  │
-│ → 14/503     │ → 2-5 entry  │ → Decisions  │ → Paper │
-│   quality    │   ready      │   4 trades   │   /Live │
-└──────────────┴──────────────┴──────────────┴─────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                     VMAA v3 Pipeline                        │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  Data Layer (Tiger 🐅 + SEC 🏛️ + yfinance 📈)              │
+│         │                                                   │
+│         ▼                                                   │
+│  Stage 1: Market Regime (SPY, VIX, MA50)                    │
+│         │                                                   │
+│         ▼                                                   │
+│  Stage 2: Part 1 — Quality Screening (7 criteria)           │
+│         │  → Quality Pool                                   │
+│         ▼                                                   │
+│  Stage 3: Part 2 — MAGNA 53/10 Momentum                     │
+│         │  → Entry-ready Candidates                         │
+│         │                                                   │
+│    ┌────┼────┐                                              │
+│    ▼    ▼    ▼                                              │
+│ 📐    🎯    💰   ← Optional Engines                         │
+│ Tech  Chip  Earnings                                        │
+│    └────┼────┘                                              │
+│         ▼                                                   │
+│  Composite Score (weighted)                                 │
+│         │                                                   │
+│         ▼                                                   │
+│  Risk Assessment (VaR + Adaptive Stop)                      │
+│         │                                                   │
+│         ▼                                                   │
+│  Trade Decision (BUY/HOLD/MONITOR)                          │
+│         │                                                   │
+│         ▼                                                   │
+│  Monitor Alerts (price/anomaly/notifications)               │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Stage 1: Core Financial Fundamentals (Part 1)
-Ensures the company has genuine cash-generation ability — eliminates value traps.
+---
+
+## Quick Start
+
+```bash
+# US daily scan (cron: 21:00 HKT weekdays)
+python3 scripts/daily_scan.py
+
+# Full v3 pipeline with all engines
+python3 engine/demo.py --full
+
+# Backtest US
+python3 backtest/runner.py --tickers INMD,TMDX,CDRE --start 2023-01-01
+
+# HK live scan
+python3 pipeline_hk.py --full-scan
+
+# Backtest HK
+python3 backtest/hk/hk_runner.py --full-scan
+
+# Single engine analysis
+python3 engine/demo.py --chip AAPL
+python3 engine/demo.py --technical AAPL,MSFT
+python3 engine/demo.py --screen AAPL,MSFT
+```
+
+---
+
+## Core Pipeline
+
+### Stage 1: Part 1 — Core Financial Fundamentals (Quality)
+
+**7 criteria** that eliminate value traps and ensure genuine cash-generation ability:
 
 | # | Criterion | Threshold | Purpose |
 |---|-----------|-----------|---------|
-| 1 | **Market Cap** | <$10B (turnaround) or <$250M (deep value) | Avoid mega-cap stagnation |
-| 2 | **Quality** | B/M ≥0.3, ROA ≥0%, EBITDA margin ≥5% | Proven profitability |
-| 3 | **FCF Yield** | ≥3% (target 8%) | Strong cash generation |
-| 4 | **Safety Margin** | PTL ≤1.30x (near 52-week low) | Buy low, not chasing |
-| 5 | **Asset Efficiency** | ΔAssets < ΔEarnings | Capital-efficient growth |
-| 6 | **IR Sensitivity** | High D/E, beta, or IR-sensitive sector | Rate-risk awareness |
-| 7 | **Earnings Authenticity** | FCF/NI ≥50% | Real earnings, not accounting |
+| 1 | Market Cap | < $10B (turnaround) / < $250M (deep value) | Avoid mega-caps |
+| 2 | B/M, ROA, EBITDA | ≥ sector median × **1.1** (10% premium) | Quality vs peers |
+| 3 | FCF Yield | ≥ 2% | Cash generation |
+| 4 | Safety Margin (PTL) | ≤ 1.50x (52-week low proximity) | Entry near support |
+| 5 | Asset Efficiency | ΔAssets < ΔEarnings | Capital discipline |
+| 6 | Interest Sensitivity | Flag high D/E, high beta, IR sectors | Macro awareness |
+| 7 | FCF/NI Conversion | ≥ 50% (weight: **20%** of score) | Earnings authenticity |
 
-**Output:** Quality Pool (typically 10–20 stocks from S&P 500) with composite quality scores.
+### Stage 2: Part 2 — MAGNA 53/10 (Momentum)
 
-### Stage 2: MAGNA 53/10 (Part 2)
-Captures momentum and breakout signals on quality-verified stocks.
+| Component | Signal | Weight | Entry Trigger |
+|-----------|--------|--------|---------------|
+| **M**assive Earnings Accel | EPS growth ↑ ≥ 20% + accel | 2 pts | M+A = Entry |
+| **A**cceleration of Sales | Revenue ↑ ≥ 10% + accel | 2 pts | M+A = Entry |
+| **G**ap Up | > 4% gap + **volume ≥ 1.5x avg** | 2 pts | G = Entry |
+| **N**eglect/Base | Sideways ≥ 6 months, ≤ 30% range | 1 pt | — |
+| **5** Short Interest | Ratio ≥ 3 (1pt) / ≥ 5 (2pts) | 0-2 pts | — |
+| **3** Analyst Target | ≥ 3 analysts, target ≥ 15% above | 1 pt | — |
+| Cap **10** | Market Cap < $10B | Prerequisite | — |
+| IPO **10** | Listed ≤ 10 years | Prerequisite | — |
 
-| Component | Description | Score |
-|-----------|-------------|-------|
-| **M** — Massive Earnings Acceleration | EPS growth ↑ ≥20% YoY acceleration | 2 pts |
-| **A** — Acceleration of Sales | Revenue growth ↑ ≥10% YoY acceleration | 2 pts |
-| **G** — Gap Up | >4% gap + pre-market vol >100K | ⚡ **Entry** |
-| **N** — Neglect / Base | ≥3mo sideways, ≤30% range, declining vol | 1 pt |
-| **5** — Short Interest | SI ratio ≥5 (2pts), ≥3 (1pt) | 1–2 pts |
-| **3** — Analyst Coverage | ≥3 analysts, target ≥15% above current | 1 pt |
-| **Cap 10** | Market cap <$10B | Required |
-| **10** — IPO recency | IPO within 10 years | Required |
+### Risk Management
 
-**Entry Triggers:**
-- **G (Gap Up)** fires alone → immediate entry signal
-- **M + A** both fire → entry signal (dual fundamental acceleration)
-- Otherwise → MONITOR (in quality pool, waiting for trigger)
+**Adaptive Stop (Phase 1 — 2026-05-06):**
+- Dynamic ATR multiplier based on price level (+1x for < $10 stocks)
+- Dynamic hard stop (15% base, 18% for < $30, 22% for < $10)
+- Market regime adjustment (HIGH vol → +0.5x ATR)
+- Near 52w-low → +0.5x ATR (room for bounce)
+- **Median stop selection** (not tightest — backtest showed 33% fewer stops)
 
-### Stage 3: Risk Management
-- **Market regime detection**: SPY vs MA50, 20-day volatility, drawdown from high
-- **Position sizing**: Quarter-Kelly with market-regime scalar (0.5x–1.0x)
-- **Stop management**: ATR-based trailing stops with structural floors
-- **Confidence scoring**: Weighted composite of quality + MAGNA + market fit
-- **Sector limits**: Max 2 positions per sector, correlation checks
-
-### Stage 4: Execution
-- Tiger Trade OpenAPI integration (paper + live)
-- Order types: MKT, LMT, STP
-- Auto-stop placement on fill
-- Portfolio & buying-power awareness
+**Position Sizing:**
+- Fixed Fractional: 1.5% of portfolio × confidence scalar
+- Max position: 20% of portfolio
+- Market regime scalar (0.5-1.0x)
 
 ---
 
-## Installation
+## Markets
 
-```bash
-# Clone
-git clone https://github.com/rollroyces/vmaa.git
-cd vmaa
+### 🇺🇸 US Market
+- **Strategy**: Quality Momentum
+- **Universe**: 85 mid-cap stocks (< $10B, liquid)
+- **Pass rate**: ~26% (22/85 quality)
+- **Cron**: Daily @ 21:00 HKT (13:00 UTC)
+- **Broker**: Tiger Trade paper/live
 
-# Python 3.11+ recommended
-pip install -r requirements.txt
-```
-
-**Requirements:** `yfinance`, `numpy`, `pandas`, `tigeropen` (for broker execution only)
+### 🇭🇰 HK Market
+- **Strategy**: Value Yield
+- **Universe**: 90 HSI constituents
+- **Pass rate**: ~75% (68/90 quality) — looser thresholds, financial bypass
+- **Data**: yfinance (.HK suffix)
+- **Currency**: HKD
+- **Broker**: Tiger Trade (pending)
 
 ---
 
-## Usage
+## Engines (Optional)
 
-### Quick Start
+| Engine | Lines | Purpose | CLI |
+|--------|-------|---------|-----|
+| **Selection** | 3,941 | Multi-factor screening, condition combos, dynamic pools, auto rotation | `--screen` |
+| **Risk** | 3,740 | VaR (6 models), Volatility (5 methods), Exposure (7 dimensions), Sizing (4 methods) | `--risk` |
+| **Monitor** | 4,002 | Price alerts, conditional orders, anomaly detection, push notifications (Telegram) | `--monitor` |
+| **Technical** | 4,134 | 25+ indicators (MA, MACD, RSI, KDJ, Bollinger, Ichimoku), custom formulas, signal aggregation | `--technical` |
+| **Chip** | 2,332 | Volume Profile, Value Area, POC, cost distribution, money flow, S/R detection | `--chip` |
+| **Earnings** | 2,757 | Consensus, surprise history, rating changes, earnings calendar | `--earnings` |
 
+**Total: 20,906 engine lines** | **32K+ total codebase**
+
+---
+
+## Backtest
+
+### US Backtest
 ```bash
-# Full dry-run scan (S&P 500)
-python3 pipeline.py --full-scan
-
-# Only Stage 1 — build quality pool
-python3 pipeline.py --scan-part1
-
-# Only Stage 2 — check quality pool for MAGNA signals
-python3 pipeline.py --scan-part2
-
-# Scan specific tickers
-python3 pipeline.py --tickers AAPL,MSFT,GOOGL
-
-# Russell 2000 universe
-python3 pipeline.py --full-scan --source russell2000
+python3 backtest/runner.py --tickers <list> --mode monthly_rebalance
+python3 backtest/runner.py --mode weekly_rebalance  # More signals
 ```
 
-### Live Trading
+**Latest results (adaptive stop, 48 stocks, 4yr 2022-2025):**
+| Metric | Tightest Stop | Median Stop | **Adaptive Stop** |
+|--------|:-------------:|:-----------:|:-----------------:|
+| Hard Stops | 6 (67%) | 4 (44%) | **2 (22%)** 🔥 |
+| Win Rate | 33% | 56% | 44% |
+| Profit Factor | 0.38 | 0.81 | **1.13** 🎯 |
+| Net P&L | -$473 | -$114 | **+$24** ✅ |
 
+### HK Backtest
 ```bash
-# LIVE mode — executes orders on Tiger Trade
-python3 pipeline.py --full-scan --live
-
-# Dry run first (default, safe)
-python3 pipeline.py --full-scan --dry-run
-```
-
-### Portfolio Management
-
-```bash
-# Show current portfolio + risk dashboard
-python3 pipeline.py --status
+python3 backtest/hk/hk_runner.py --full-scan
+python3 backtest/hk/hk_runner.py --tickers 0700.HK,0388.HK
 ```
 
 ---
 
-## Output
+## Structural Fixes (2026-05-05)
 
-All results saved to `output/`:
+| # | Fix | Impact |
+|---|-----|--------|
+| 1 | **Analyst tracker** — no false positives on first observation | MAGNA score integrity |
+| 2 | **G trigger** — replaced broken preMarketVolume with real volume check | G signal now works |
+| 3 | **Sector comparison** — 10% premium (not just ">= median") | Better quality selection |
+| 4 | **Config weights** — FCF/NI 10%→20% per Royce spec | Aligned with requirements |
+| 5 | **Stop selection** — median instead of tightest | 33% fewer hard stops |
+| 6 | **Backtest engine** — uses live modules, no duplicate logic | Config changes propagate |
+
+---
+
+## Dependencies
 
 ```
-output/
-├── pipeline_result.json    # Full pipeline output (JSON)
-├── quality_pool.json        # Stage 1 quality pool
-├── magna_signals.json       # Stage 2 MAGNA signals
-└── trade_decisions.json     # Final trade decisions
-```
-
-Generate a Telegram-friendly report:
-
-```bash
-python3 report.py output/pipeline_result.json
+Python 3.10+
+numpy, pandas, yfinance
+tigeropen (Tiger Trade SDK)
+requests (SEC EDGAR API)
 ```
 
 ---
 
 ## Configuration
 
-All thresholds centralized in `config.py`:
+All thresholds in `config.py`:
+- `Part1Config` — Quality screening params
+- `Part2Config` — MAGNA scoring params
+- `RiskConfig` — Stop/sizing params
 
-```python
-# config.py — Part1Config
-min_fcf_yield: float = 0.03          # Minimum 3% FCF yield
-max_ptl_ratio: float = 1.30          # Max 30% above 52w-low
-min_fcf_conversion: float = 0.50     # FCF/NI >= 50%
-
-# config.py — Part2Config
-gap_min_pct: float = 0.04            # 4% gap threshold
-gap_min_premarket_vol: int = 100000  # Minimum pre-market volume
-magna_entry_threshold: int = 5       # Minimum MAGNA score for entry
-
-# config.py — RiskConfig
-max_positions: int = 8              # Max concurrent positions
-max_position_pct: float = 0.125     # 12.5% per position (1/8 Kelly)
-max_sector_exposure: float = 0.25   # 25% max per sector
-```
-
----
-
-## Broker Setup (Tiger Trade)
-
-1. Place `tiger_openapi_config.properties` and `tiger_openapi_token.properties` in `broker/`
-2. Test connection:
-
-```bash
-python3 broker/test_connection.py
-```
-
-3. Dry-run before live — always.
-
----
-
-## Module Map
-
-| File | Role |
-|------|------|
-| `pipeline.py` | Two-stage orchestrator + CLI |
-| `config.py` | All thresholds (Part1, Part2, Risk, Pipeline) |
-| `models.py` | Shared dataclasses (Part1Result, Part2Signal, TradeDecision) |
-| `part1_fundamentals.py` | Core Financial Fundamentals screener (7 criteria) |
-| `part2_magna.py` | MAGNA 53/10 momentum screener |
-| `risk.py` | Risk management, position sizing, stops, confidence |
-| `analyst_tracker.py` | Analyst revision tracking |
-| `report.py` | Telegram/Markdown report generator |
-| `broker/tiger_broker.py` | Tiger Trade execution layer |
-| `broker/vmaa_tiger_bridge.py` | VMAA ↔ Tiger signal bridge |
-
----
-
-## Example Output (May 5, 2026)
-
-```
-📊 S&P 500 Full Scan — 503 stocks in 298s
-💰 SPY $718.01 | MA50 ✓ | Vol NORMAL | Scalar 0.8x
-
-Stage 1: 14/503 passed quality (2.8%)
-Stage 2: 5 MAGNA signals, 2 entry-ready
-
-⚡ BUY  IT   536sh @ $149.19  Stop $137.34  MAGNA 7/10  Q=74%
-⚡ BUY  RVTY 906sh @ $88.27   Stop $80.79   MAGNA 6/10  Q=74%
-📊 HOLD ARE        @ $41.14   MAGNA 3/10 — waiting for trigger
-
-Executed: 2 | Skipped: 1 | Candidates: 5
-```
-
----
-
-## Disclaimer
-
-**For educational and research purposes only.** This is not financial advice. Past performance does not guarantee future results. Paper trading results do not account for slippage, liquidity constraints, or market impact. Always consult a qualified financial advisor before making investment decisions.
+Engine configs in:
+- `engine/config.py` — Global engine settings
+- `engine/risk/config/` — Risk engine YAML
+- `engine/earnings/config.json` — Earnings engine
+- `engine/chip/config.json` — Chip engine
 
 ---
 
 ## License
 
-MIT © rollroyces
+Private — rollroyces/vmaa

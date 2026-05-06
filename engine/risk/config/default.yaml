@@ -1,0 +1,111 @@
+# VMAA Risk Assessment Engine — Default Configuration
+# =====================================================
+
+# --- Volatility ---
+volatility:
+  windows: [10, 20, 50, 100]          # Historical vol windows (trading days)
+  ewma_lambda: 0.94                   # RiskMetrics lambda
+  regime_thresholds:
+    low: 0.12                          # <12% annualized = LOW
+    normal: 0.22                       # 12-22% = NORMAL
+    high: 0.35                         # 22-35% = HIGH
+    extreme: 0.35                      # >35% = EXTREME (implied >high)
+  term_structure:
+    short_window: 20                   # Short-term window
+    long_window: 60                    # Long-term window
+
+# --- Value at Risk ---
+var:
+  confidence_levels: [0.95, 0.99]     # VaR confidence
+  historical_window: 252              # 1 year of daily returns
+  ewma_decay: 0.94
+  monte_carlo:
+    simulations: 2000                 # MC paths
+    horizon_days: 10                   # Forecast horizon
+  stress_scenarios:
+    - name: "2008_Financial_Crisis"
+      description: "Lehman collapse, systemic credit freeze"
+      shock:
+        equity: -0.38                  # SPY fell ~38% peak-to-trough
+        volatility_mult: 3.0
+        correlation_mult: 1.5
+    - name: "2020_COVID_Crash"
+      description: "Pandemic lockdown, fastest bear market"
+      shock:
+        equity: -0.34
+        volatility_mult: 4.0
+        correlation_mult: 1.8
+    - name: "2022_Rate_Shock"
+      description: "Fed aggressive hiking, tech/growth re-price"
+      shock:
+        equity: -0.25
+        volatility_mult: 2.0
+        correlation_mult: 1.3
+    - name: "Tech_Bubble_2000"
+      description: "Dot-com bust, tech -78%"
+      shock:
+        equity: -0.45
+        volatility_mult: 2.5
+        correlation_mult: 1.6
+    - name: "Liquidity_Crisis"
+      description: "Market-wide liquidity drain, funding stress"
+      shock:
+        equity: -0.20
+        volatility_mult: 2.5
+        correlation_mult: 2.0
+
+# --- Exposure ---
+exposure:
+  factor_betas:
+    market: "SPY"
+    size: "IWM"                       # Small-cap proxy
+    value: "IWD"                      # Large value proxy
+    growth: "IWF"                     # Large growth proxy
+  concentration:
+    hhi_warning: 0.15                 # HHI > 15% = concentration warning
+    hhi_danger: 0.25                  # HHI > 25% = excessive concentration
+  liquidity:
+    max_position_pct_adv: 0.05        # Max 5% of ADV per position
+    adv_warning_threshold: 0.02       # 2% of ADV = warning
+  correlation:
+    max_pairwise_warning: 0.70        # Pairwise correlation warning
+    max_pairwise_hard: 0.85           # Hard correlation limit
+  tail_risk:
+    skewness_warning: -0.50           # Negative skew warning
+    kurtosis_warning: 5.0             # Excess kurtosis warning
+
+# --- Position Sizing ---
+sizing:
+  method: "fixed_fractional"          # fixed_fractional | kelly | risk_parity | vol_target
+  fixed_fractional:
+    base_risk_pct: 0.015              # 1.5% risk per trade (base)
+    min_risk_pct: 0.005               # 0.5% minimum
+    max_risk_pct: 0.03                # 3% maximum
+    confidence_threshold: 0.35        # Min confidence for any position
+  kelly:
+    fraction: 0.25                    # Quarter-Kelly
+    min_fraction: 0.10
+    max_fraction: 0.50
+    min_win_probability: 0.30
+  risk_parity:
+    target_risk_contribution: 1.0     # Equal contribution
+    max_leverage: 1.5
+    lookback_days: 60
+  volatility_targeting:
+    target_vol: 0.15                  # 15% annualized target
+    max_scale_up: 2.0                 # Max 2x position from vol scaling
+    min_scale_down: 0.25              # Min 0.25x position from vol scaling
+
+  # Circuit Breakers
+  circuit_breakers:
+    daily_loss_limit: -0.03           # -3% → stop trading for day
+    weekly_loss_limit: -0.06          # -6% → stop for week
+    max_drawdown_limit: -0.15         # -15% → full stop, manual review
+    consecutive_losses: 5             # 5 consecutive losing trades
+    position_loss_limit: -0.20        # -20% on single position → exit
+
+# --- Engine ---
+engine:
+  log_level: "INFO"
+  report_format: "json"               # json | dict
+  cache_ttl_seconds: 300              # Cache market data for 5 min

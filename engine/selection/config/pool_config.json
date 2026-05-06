@@ -1,0 +1,122 @@
+{
+  "_description": "Dynamic stock pool configuration — entry/exit rules, limits, and maintenance.",
+  "_version": "1.0.0",
+
+  "pools": {
+    "core": {
+      "label": "Core Pool",
+      "description": "Long-term holdings with strong fundamentals",
+      "max_size": 30,
+      "min_size": 10,
+      "sector_limit": 5,
+      "max_single_position_pct": 10.0,
+      "entry_conditions": {
+        "min_composite_score": 0.65,
+        "min_quality_score": 0.50,
+        "require_profitable": true,
+        "min_market_cap_b": 0.5
+      },
+      "exit_conditions": {
+        "max_drawdown_pct": 25.0,
+        "min_composite_score": 0.35,
+        "max_consecutive_days_below_ma50": 90,
+        "require_profitable": false
+      },
+      "rebalance": {
+        "interval_days": 30,
+        "max_turnover_pct": 20.0,
+        "min_hold_days": 30
+      }
+    },
+    "tactical": {
+      "label": "Tactical Pool",
+      "description": "Short-term opportunities with momentum triggers",
+      "max_size": 15,
+      "min_size": 3,
+      "sector_limit": 3,
+      "max_single_position_pct": 20.0,
+      "entry_conditions": {
+        "min_composite_score": 0.55,
+        "min_momentum_score": 0.50,
+        "require_entry_signal": true,
+        "min_volume_1m": 100000
+      },
+      "exit_conditions": {
+        "max_drawdown_pct": 15.0,
+        "min_composite_score": 0.30,
+        "max_hold_days": 60,
+        "momentum_cooling_period_days": 5
+      },
+      "rebalance": {
+        "interval_days": 7,
+        "max_turnover_pct": 40.0,
+        "min_hold_days": 5
+      }
+    },
+    "watchlist": {
+      "label": "Watchlist",
+      "description": "Stocks to monitor for potential entry",
+      "max_size": 50,
+      "min_size": 0,
+      "sector_limit": 0,
+      "max_single_position_pct": 0.0,
+      "entry_conditions": {
+        "min_composite_score": 0.45,
+        "min_quality_score": 0.35,
+        "near_52w_low_pct": 20.0,
+        "volume_spike_factor": 1.5
+      },
+      "exit_conditions": {
+        "days_no_signal": 30,
+        "max_drawdown_pct": 30.0
+      },
+      "rebalance": {
+        "interval_days": 7,
+        "max_turnover_pct": 50.0,
+        "min_hold_days": 0
+      }
+    },
+    "remove": {
+      "label": "Remove / Blacklist",
+      "description": "Stocks explicitly excluded from all pools",
+      "max_size": 200,
+      "min_size": 0,
+      "sector_limit": 0,
+      "max_single_position_pct": 0.0,
+      "entry_conditions": {
+        "manual_add": true,
+        "auto_blacklist_triggers": [
+          "delisting_warning",
+          "accounting_irregularity",
+          "regulatory_risk",
+          "bankruptcy_risk",
+          "extreme_volatility"
+        ]
+      },
+      "exit_conditions": {
+        "manual_remove_only": true,
+        "auto_review_days": 90
+      },
+      "rebalance": {
+        "interval_days": 30,
+        "max_turnover_pct": 0.0,
+        "min_hold_days": 0
+      }
+    }
+  },
+
+  "history": {
+    "enabled": true,
+    "max_entries_per_pool": 5000,
+    "snapshot_interval_days": 1,
+    "track_metrics": [
+      "composition_score",
+      "turnover",
+      "sector_concentration",
+      "avg_factor_scores",
+      "pool_size"
+    ]
+  },
+
+  "priority": ["core", "tactical", "watchlist", "remove"]
+}
