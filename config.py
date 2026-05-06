@@ -25,9 +25,10 @@ class Part1Config:
     # ── 1. Market Cap Positioning ──
     deep_value_max_cap: float = 250e6         # $250M — deep value threshold
     turnaround_max_cap: float = 10e9          # $10B — turnaround growth ceiling
+    large_cap_enabled: bool = True            # Accept stocks > $10B as "large_cap"
     # Classification: < deep_value_max_cap → "deep_value"
     #                 < turnaround_max_cap  → "turnaround"
-    #                 >= turnaround_max_cap → REJECTED
+    #                 >= turnaround_max_cap → "large_cap" (if enabled) or REJECTED
 
     # ── 2. Quality: B/M Ratio ──
     min_bm_ratio: float = 0.20                # Minimum Book-to-Market (was 0.3 — relaxed for mid-cap tech/growth)
@@ -124,10 +125,11 @@ class Part2Config:
 
     # ── Cap 10: Market Cap ──
     max_market_cap: float = 10e9              # $10B ceiling
+    large_cap_enabled: bool = True            # Accept stocks > $10B as "large_cap"
 
     # ── 10: IPO Tenure ──
     max_ipo_years: float = 10.0               # Listed ≤ 10 years
-    ipo_hard_requirement: bool = True          # Hard reject if IPO > 10yr (per spec)
+    ipo_hard_requirement: bool = False         # Soft flag, not hard reject (relaxed)
 
     # ── Scoring ──
     magna_points: dict = field(default_factory=lambda: {

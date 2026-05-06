@@ -322,14 +322,17 @@ class HistoricalSignalGenerator:
         info = dict(cached)  # Start with current yfinance data
         
         # Override price-dependent fields with historical snapshot data
-        info['regularMarketPrice'] = snapshot.close
-        info['currentPrice'] = snapshot.close
-        info['previousClose'] = snapshot.close
-        info['fiftyTwoWeekLow'] = snapshot.low_52w
-        info['fiftyTwoWeekHigh'] = snapshot.high_52w
-        info['marketCap'] = snapshot.market_cap
-        info['fiftyTwoWeekLow'] = snapshot.low_52w
-        info['fiftyTwoWeekHigh'] = snapshot.high_52w
+        # Only override if snapshot provides meaningful (non-zero) values
+        if snapshot.close > 0:
+            info['regularMarketPrice'] = snapshot.close
+            info['currentPrice'] = snapshot.close
+            info['previousClose'] = snapshot.close
+        if snapshot.low_52w > 0:
+            info['fiftyTwoWeekLow'] = snapshot.low_52w
+        if snapshot.high_52w > 0:
+            info['fiftyTwoWeekHigh'] = snapshot.high_52w
+        if snapshot.market_cap and snapshot.market_cap > 0:
+            info['marketCap'] = snapshot.market_cap
         
         return info
 
@@ -704,7 +707,7 @@ class BacktestEngine:
         lookback = self.config.sector_momentum_lookback
         sector_returns: Dict[str, float] = {}
         for ticker in tickers:
-            sector = self.screener._yf_cache.get(ticker, {}).get('sector', '')
+            sector = self.signal_gen._yf_cache.get(ticker, {}).get('sector', '')
             if not sector or sector == 'Unknown':
                 continue
             hist = self._daily_prices.get(ticker)
@@ -729,7 +732,7 @@ class BacktestEngine:
         # Get market regime (store for adaptive stop in _execute_trade)
         market = self.signal_gen.get_market_regime(bench_hist, date_str)
         self._market_regime = market
-        scalar = market.position_scalar if market.market_ok else 0.25
+        scalar = market.position_scalar if market.market_ok else 0.50  # Floor raised
 
         # Compute sector momentum rankings
         self._top_sectors: set = set()
@@ -846,8 +849,8 @@ class BacktestEngine:
 
         portfolio_value = self.portfolio.equity
         # Adaptive Kelly: aggressive in bull, conservative in bear
-        market_ok = self._market_regime.get("market_ok", True)
-        vol_regime = self._market_regime.get("vol_regime", "NORMAL")
+        market_ok = self._market_regime.market_ok if self._market_regime else True
+        vol_regime = self._market_regime.vol_regime if self._market_regime else "NORMAL"
         if market_ok and vol_regime == "LOW":
             kelly_frac = self.config.kelly_fraction_bull
         elif not market_ok:

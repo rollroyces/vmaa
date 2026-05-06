@@ -131,7 +131,7 @@ def _check_earnings_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
         # Latest Q, Previous Q, Same Q last year
         eps_q0 = float(eps.iloc[0])
         eps_q1 = float(eps.iloc[1])
-        eps_q4 = float(eps.iloc[3]) if len(eps) > 3 else eps_q1
+        eps_q4 = float(eps.iloc[4]) if len(eps) > 4 else (float(eps.iloc[3]) if len(eps) > 3 else eps_q1)
 
         if abs(eps_q1) < 1e-6 or abs(eps_q4) < 1e-6:
             return False, 0.0, 0.0, 0.0
@@ -183,7 +183,7 @@ def _check_sales_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
 
         rev_q0 = float(revenue.iloc[0])
         rev_q1 = float(revenue.iloc[1])
-        rev_q4 = float(revenue.iloc[3]) if len(revenue) > 3 else rev_q1
+        rev_q4 = float(revenue.iloc[4]) if len(revenue) > 4 else (float(revenue.iloc[3]) if len(revenue) > 3 else rev_q1)
 
         if rev_q4 <= 0:
             return False, 0.0, 0.0, 0.0
@@ -361,7 +361,12 @@ def _check_cap_and_ipo(info: dict) -> Tuple[bool, bool, Optional[float]]:
     Returns: (cap_ok, ipo_ok, ipo_years)
     """
     market_cap = info.get('marketCap', 0) or 0
-    cap_ok = market_cap > 0 and market_cap <= P2C.max_market_cap
+    if market_cap > 0 and market_cap <= P2C.max_market_cap:
+        cap_ok = True
+    elif market_cap > P2C.max_market_cap and P2C.large_cap_enabled:
+        cap_ok = True  # Large cap accepted when enabled
+    else:
+        cap_ok = False
 
     ipo_years = None
     ipo_ok = False
@@ -397,9 +402,10 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
     # ── Cap 10 & 10 (prerequisites) ──
     cap_ok, ipo_ok, ipo_years = _check_cap_and_ipo(info)
 
-    # If we have Part1 data, we already know cap is < $10B
+    # If we have Part1 data, use it for cap check (with large_cap support)
     if part1 and part1.market_cap > 0:
-        cap_ok = part1.market_cap <= P2C.max_market_cap
+        cap_ok = (part1.market_cap <= P2C.max_market_cap or
+                  (part1.market_cap > P2C.max_market_cap and P2C.large_cap_enabled))
 
     # Cap 10: hard requirement (per MAGNA spec, must be <$10B for momentum stocks)
     if not cap_ok:

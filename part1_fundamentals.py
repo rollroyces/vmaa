@@ -129,7 +129,7 @@ def _basic_checks(info: dict, hist: pd.DataFrame) -> bool:
 
 def _check_market_cap(info: dict) -> Tuple[bool, str, float]:
     """
-    Classify market cap and reject mega-caps.
+    Classify market cap and reject mega-caps (unless large_cap_enabled).
     Returns: (passed, cap_type, market_cap_value)
     """
     market_cap = info.get('marketCap', 0) or 0
@@ -140,6 +140,8 @@ def _check_market_cap(info: dict) -> Tuple[bool, str, float]:
         return True, "deep_value", market_cap
     elif market_cap <= P1C.turnaround_max_cap:
         return True, "turnaround", market_cap
+    elif P1C.large_cap_enabled:
+        return True, "large_cap", market_cap
     else:
         return False, "mega_cap", market_cap
 
