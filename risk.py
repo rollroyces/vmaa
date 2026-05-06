@@ -145,6 +145,7 @@ def compute_stops(
     entry_price: float,
     low_52w: float,
     hist: pd.DataFrame,
+    market: Optional[object] = None,
 ) -> Tuple[float, str]:
     """
     Compute optimal stop loss using 3 methods, pick the median one.
