@@ -261,6 +261,13 @@ class HKBacktestEngine:
         self._daily_prices: Dict[str, pd.DataFrame] = {}
         self._market_regime: dict = {}
         self._bench_start_price: Optional[float] = None
+        
+        # Improvement: track hard-stopped tickers for cooldown (6 months)
+        self._hard_stopped_tickers: Dict[str, str] = {}  # ticker → date
+        self._hs_cooldown_days: int = 180  # 6-month ban after hard stop
+        
+        # Improvement: track per-sector hard stop streaks
+        self._sector_hs_streak: Dict[str, int] = {}
 
     def run(self, tickers: Optional[List[str]] = None) -> HKBacktestResult:
         """Execute the full HK backtest."""
@@ -444,7 +451,7 @@ class HKBacktestEngine:
         self._market_regime = self.screener.get_hk_market_regime(hsi_hist, date_str)
         scalar = self._market_regime.get("position_scalar", 0.8)
         if not self._market_regime.get("market_ok", True):
-            scalar = 0.25
+            scalar = 0.50  # Floor raised from 0.25 — avoid over-penalising
 
         # Run Part 1 + Part 2 on all tickers
         candidates: List[HKCandidate] = []
@@ -498,6 +505,8 @@ class HKBacktestEngine:
         skipped_max_pos = 0
         skipped_sector = 0
         skipped_sizing = 0
+        skipped_momentum = 0
+        skipped_cooldown = 0
         for candidate in candidates:
             if self.portfolio.num_positions >= self.config.max_positions:
                 skipped_max_pos += 1
@@ -507,9 +516,37 @@ class HKBacktestEngine:
             sector_count = sum(
                 1 for p in self.portfolio.positions.values() if p.sector == sector
             )
-            if sector_count >= self.config.max_positions_per_sector:
+            
+            # Fix #7: Sector loss tracker — halve per-sector limit
+            hs_streak = self._sector_hs_streak.get(sector, 0)
+            sector_limit = self.config.max_positions_per_sector
+            if hs_streak >= 2:
+                sector_limit = max(1, sector_limit // 2)
+            if sector_count >= sector_limit:
                 skipped_sector += 1
                 continue
+
+            # Fix #2: Repeat-offender filter — skip tickers that hit hard stop recently
+            ticker = candidate.ticker
+            if ticker in self._hard_stopped_tickers:
+                last_hs = pd.Timestamp(self._hard_stopped_tickers[ticker])
+                cooldown_end = last_hs + pd.Timedelta(days=self._hs_cooldown_days)
+                if pd.Timestamp(date_str) < cooldown_end:
+                    skipped_cooldown += 1
+                    continue
+                else:
+                    del self._hard_stopped_tickers[ticker]  # cooldown expired
+
+            # Fix #3: Entry momentum filter — require price > 20-day MA
+            hist = self._daily_prices.get(ticker)
+            if hist is not None and len(hist) >= 20:
+                target = pd.Timestamp(date_str)
+                available = hist[hist.index <= target]
+                if len(available) >= 20:
+                    ma20 = float(available['Close'].tail(20).mean())
+                    if available['Close'].iloc[-1] < ma20 * 0.98:  # 2% tolerance
+                        skipped_momentum += 1
+                        continue
 
             pos_before = self.portfolio.num_positions
             self._execute_entry(candidate, date_str, scalar)
@@ -518,10 +555,11 @@ class HKBacktestEngine:
             else:
                 skipped_sizing += 1
 
-        if skipped_max_pos + skipped_sector + skipped_sizing > 0 or entered > 0:
+        if skipped_max_pos + skipped_sector + skipped_sizing + skipped_momentum + skipped_cooldown > 0 or entered > 0:
             logger.info(
                 f"    Entered: {entered} | Skipped: {skipped_max_pos} max_pos, "
-                f"{skipped_sector} sector, {skipped_sizing} sizing"
+                f"{skipped_sector} sector, {skipped_sizing} sizing, "
+                f"{skipped_momentum} mom, {skipped_cooldown} cooldown"
             )
 
     def _execute_entry(self, candidate: HKCandidate, date_str: str,
@@ -781,6 +819,17 @@ class HKBacktestEngine:
             is_win=exit_price > pos.entry_price,
         )
         self.trades.append(trade)
+
+        # Track hard stops for repeat-offender + sector streak filters
+        if "hard_stop" in reason:
+            self._hard_stopped_tickers[ticker] = date_str
+            sector = pos.sector
+            self._sector_hs_streak[sector] = self._sector_hs_streak.get(sector, 0) + 1
+        else:
+            # Reset sector streak on any non-HS exit (wins + other stops)
+            sector = pos.sector
+            if sector in self._sector_hs_streak and self._sector_hs_streak[sector] > 0:
+                self._sector_hs_streak[sector] = 0
 
         logger.debug(
             f"    🇭🇰 SELL {ticker:10s} HKD {exit_price:.2f} "

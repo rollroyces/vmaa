@@ -44,7 +44,7 @@ class HKScreeningThresholds:
 
     # ── Pass thresholds ──
     min_core_passed: int = 4             # Minimum core criteria to pass Part 1
-    min_quality_score: float = 0.25      # Minimum composite quality score
+    min_quality_score: float = 0.35      # Minimum composite quality score
 
     # ── Part 2: MAGNA ──
     eps_accel_min: float = 0.15          # HK: 15% EPS accel (US: 20%)
@@ -132,7 +132,7 @@ class HKBacktestConfig:
     min_position_hkd: float = 2000.0          # Min HKD 2K position
 
     # ── Stop Loss / Take Profit ──
-    atr_stop_multiplier: float = 2.0
+    atr_stop_multiplier: float = 3.0
     hard_stop_pct: float = 0.15              # 15% for HK (wider: higher vol)
     trailing_stop_pct: float = 0.10
     trailing_activate_after: float = 0.12
