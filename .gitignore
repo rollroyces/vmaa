@@ -1,14 +1,17 @@
+# Tiger Trade API credentials — DO NOT COMMIT
+broker/tiger_openapi_config.properties
+broker/tiger_openapi_token.properties
+
+# Python
 __pycache__/
 *.pyc
-node_modules/
-output/*.json
-output/*.csv
-output/*.txt
-engine/data/pools/
-engine/data/orders/
-engine/data/alerts/
-data/cache/
+*.pyo
+.venv/
+venv/
+
+# Output / cache
+output/
+backtest/cache/
 backtest/output/
-backtest/hk/output/
-*.log
-.env
+*.pkl
+*.pickle
