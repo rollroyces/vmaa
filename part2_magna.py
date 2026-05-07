@@ -398,6 +398,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
 
     magna_score = 0
     trigger_signals: List[str] = []
+    details: Dict[str, Any] = {}
 
     # ── Cap 10 & 10 (prerequisites) ──
     cap_ok, ipo_ok, ipo_years = _check_cap_and_ipo(info)
@@ -419,17 +420,50 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
         else:
             logger.debug(f"  {ticker}: IPO > 10yr ({ipo_years:.0f}yr), soft flag (not rejected)")
 
-    # ── M: Earnings Acceleration ──
+    # ── M: Earnings Acceleration (graduated scoring) ──
     m_pass, eps_curr, eps_prev, eps_accel = _check_earnings_accel(t)
+    # Graduated EPS score: 20%+=2pt, 15%+=1.5pt, 10%+=1pt, 5%+=0.5pt
+    eps_growth_rate = eps_curr if eps_curr > 0 else 0
+    eps_score = 0.0
+    if eps_growth_rate >= 0.20: eps_score = 2.0
+    elif eps_growth_rate >= 0.15: eps_score = 1.5
+    elif eps_growth_rate >= 0.10: eps_score = 1.0
+    elif eps_growth_rate >= 0.05: eps_score = 0.5
     if m_pass:
-        magna_score += P2C.magna_points['m_earnings_accel']
-        trigger_signals.append('M')
+        magna_score += max(P2C.magna_points['m_earnings_accel'], int(eps_score))
+    elif eps_score > 0:
+        magna_score += int(eps_score)
+    if eps_score >= 0.5:
+        trigger_signals.append(f'M({eps_score:.1f})')
 
-    # ── A: Sales Acceleration ──
+    # ── A: Sales Acceleration (graduated scoring) ──
     a_pass, rev_curr, rev_prev, rev_accel = _check_sales_accel(t)
+    # Graduated sales score: 10%+=2pt, 8%+=1.5pt, 5%+=1pt
+    sales_score = 0.0
+    if rev_curr >= 0.10: sales_score = 2.0
+    elif rev_curr >= 0.08: sales_score = 1.5
+    elif rev_curr >= 0.05: sales_score = 1.0
     if a_pass:
-        magna_score += P2C.magna_points['a_sales_accel']
-        trigger_signals.append('A')
+        magna_score += max(P2C.magna_points['a_sales_accel'], int(sales_score))
+    elif sales_score > 0:
+        magna_score += int(sales_score)
+    if sales_score >= 0.5:
+        trigger_signals.append(f'A({sales_score:.1f})')
+
+    # ── Price Momentum Bonus ──
+    # 3-month return vs universe = quality signal for growth candidates
+    price_momentum = 0.0
+    if hist is not None and len(hist) >= 60:
+        price_3m_ago = float(hist['Close'].iloc[-63]) if len(hist) >= 63 else float(hist['Close'].iloc[0])
+        price_now = float(hist['Close'].iloc[-1])
+        if price_3m_ago > 0:
+            mom_3m = (price_now - price_3m_ago) / price_3m_ago
+            if mom_3m >= 0.10: price_momentum = 1.0
+            elif mom_3m >= 0.05: price_momentum = 0.5
+            details['price_momentum_3m'] = round(mom_3m, 4)
+    if price_momentum > 0:
+        magna_score += int(price_momentum)
+        trigger_signals.append(f'PM({price_momentum:.1f})')
 
     # ── G: Gap Up ──
     g_pass, g_vol_ok, gap_pct, gap_vol = _check_gap_up(hist, info)
@@ -474,13 +508,17 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
     # ── Composite ──
     magna_score = min(magna_score, 10)
 
-    # ── Entry Trigger Logic ──
-    # Entry fires when: G (Gap + Premarket Vol) OR both M+A fire simultaneously
+    # ── Entry Trigger Logic (graduated) ──
+    # Entry ready if: (growth composite >= 2.5) or gap confirmed or both M+A binary
+    growth_composite = eps_score + sales_score + price_momentum
     entry_ready = False
     if g_full_pass:
         entry_ready = True  # Gap-up WITH premarket volume confirmation
     elif m_pass and a_pass:
         entry_ready = True  # Fundamental acceleration trigger
+    elif growth_composite >= 2.5:
+        entry_ready = True  # Strong graduated growth signal
+    details['growth_composite'] = round(growth_composite, 1)
 
     if magna_score < P2C.magna_pass_threshold and not entry_ready:
         return None

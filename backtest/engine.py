@@ -516,6 +516,7 @@ class BacktestEngine:
         self._hs_cooldown_days: int = 180
         self._sector_hs_streak: Dict[str, int] = {}
         self._top_sectors: set = set()
+        self._is_bear_market: bool = False
 
     def run(self, tickers: Optional[List[str]] = None) -> BacktestResult:
         """
@@ -734,6 +735,19 @@ class BacktestEngine:
         self._market_regime = market
         scalar = market.position_scalar if market.market_ok else 0.50  # Floor raised
 
+        # Bear market detection: SPY < MA200 → aggressive risk reduction
+        self._is_bear_market = False
+        if self.config.bear_market_enabled and bench_hist is not None and len(bench_hist) > self.config.bear_market_ma_period:
+            target = pd.Timestamp(date_str)
+            available = bench_hist[bench_hist.index <= target]
+            if len(available) >= self.config.bear_market_ma_period:
+                spy_ma200 = float(available['Close'].tail(self.config.bear_market_ma_period).mean())
+                spy_current = float(available['Close'].iloc[-1])
+                if spy_current < spy_ma200:
+                    self._is_bear_market = True
+                    scalar = max(0.15, scalar * 0.5)  # Halve position scalar in bear
+                    logger.info(f"  🐻 BEAR: SPY ${spy_current:.0f} < MA200 ${spy_ma200:.0f} | Scalar→{scalar:.2f}")
+
         # Compute sector momentum rankings
         self._top_sectors: set = set()
         if self.config.sector_momentum_enabled:
@@ -783,8 +797,11 @@ class BacktestEngine:
         candidates.sort(key=lambda c: (c.entry_triggered, c.composite_rank), reverse=True)
 
         # Execute entries
+        max_pos = self.config.bear_max_positions if self._is_bear_market else self.config.max_positions
+        min_q = self.config.bear_min_quality_score if self._is_bear_market else 0.25
+        
         for candidate in candidates:
-            if self.portfolio.num_positions >= self.config.max_positions:
+            if self.portfolio.num_positions >= max_pos:
                 break
 
             # Sector limit
@@ -807,6 +824,10 @@ class BacktestEngine:
                 continue
 
             # Entry decision
+            # Bear market: raise quality floor
+            if self._is_bear_market and candidate.part1.quality_score < min_q:
+                continue
+
             # Momentum filter: require price > 20-day MA
             ticker = candidate.ticker
             hist = self._daily_prices.get(ticker)
@@ -840,7 +861,9 @@ class BacktestEngine:
 
         # Position sizing (Quarter-Kelly)
         confidence = self._compute_confidence(candidate)
-        risk_per_share = entry_price * self.config.hard_stop_pct
+        # Bear market: tighter stop for position sizing
+        hard_stop_pct = self.config.bear_hard_stop_pct if self._is_bear_market else self.config.hard_stop_pct
+        risk_per_share = entry_price * hard_stop_pct
         # Base win probability 50% modulated by confidence (0.45 → 0.55 range)
         win_prob = 0.45 + confidence * 0.10
         payout = 2.0
@@ -851,8 +874,10 @@ class BacktestEngine:
         # Adaptive Kelly: aggressive in bull, conservative in bear
         market_ok = self._market_regime.market_ok if self._market_regime else True
         vol_regime = self._market_regime.vol_regime if self._market_regime else "NORMAL"
-        if market_ok and vol_regime == "LOW":
+        if market_ok and vol_regime == "LOW" and not self._is_bear_market:
             kelly_frac = self.config.kelly_fraction_bull
+        elif self._is_bear_market:
+            kelly_frac = self.config.bear_kelly_fraction
         elif not market_ok:
             kelly_frac = self.config.kelly_fraction_bear
         else:

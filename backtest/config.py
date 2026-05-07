@@ -130,6 +130,14 @@ class BacktestConfig:
     # Cache directory for downloaded data
     cache_dir: str = "backtest/cache"
 
+    # ── Bear Market Defense ──
+    bear_market_ma_period: int = 200          # MA period for bear detection
+    bear_market_enabled: bool = True          # Enable bear-market risk reduction
+    bear_max_positions: int = 2               # Max positions when SPY < MA200
+    bear_hard_stop_pct: float = 0.10          # Tighter stop in bear markets
+    bear_kelly_fraction: float = 0.10         # Conservative sizing in bear
+    bear_min_quality_score: float = 0.50      # Higher quality floor in bear
+
     # ── Output ──
     output_dir: str = "backtest/output"
     save_trade_log: bool = True
