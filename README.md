@@ -1,51 +1,72 @@
-# VMAA v3 — Value Mean-reversion Algorithmic Advisor
+# VMAA v3 — WIDE_STOP Strategy 🦾
 
 **Multi-market quantitative trading framework — US + Hong Kong.**
 
-VMAA is a two-stage value + momentum framework that scans markets through a disciplined quality filter, triggers entries on momentum acceleration, manages risk with adaptive stops, and extends with 6 optional analysis engines (technical, chip, earnings, risk, selection, monitoring).
+VMAA is a three-stage value + momentum + sentiment framework that screens for quality at value prices, triggers entries on MAGNA momentum acceleration, filters through multi-source sentiment analysis, and manages risk with backtest-optimized WIDE_STOP parameters.
 
-Built for paper trading on Tiger Trade; live execution is opt-in.
+WIDE_STOP is the winner of 8 backtest experiments: full TP exit, wide stops for mean-reversion, no time limits. Built for paper trading on Tiger Trade; live execution is opt-in.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     VMAA v3 Pipeline                        │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│  Data Layer (Tiger 🐅 + SEC 🏛️ + yfinance 📈)              │
-│         │                                                   │
-│         ▼                                                   │
-│  Stage 1: Market Regime (SPY, VIX, MA50)                    │
-│         │                                                   │
-│         ▼                                                   │
-│  Stage 2: Part 1 — Quality Screening (7 criteria)           │
-│         │  → Quality Pool                                   │
-│         ▼                                                   │
-│  Stage 3: Part 2 — MAGNA 53/10 Momentum                     │
-│         │  → Entry-ready Candidates                         │
-│         │                                                   │
-│    ┌────┼────┐                                              │
-│    ▼    ▼    ▼                                              │
-│ 📐    🎯    💰   ← Optional Engines                         │
-│ Tech  Chip  Earnings                                        │
-│    └────┼────┘                                              │
-│         ▼                                                   │
-│  Composite Score (weighted)                                 │
-│         │                                                   │
-│         ▼                                                   │
-│  Risk Assessment (VaR + Adaptive Stop)                      │
-│         │                                                   │
-│         ▼                                                   │
-│  Trade Decision (BUY/HOLD/MONITOR)                          │
-│         │                                                   │
-│         ▼                                                   │
-│  Monitor Alerts (price/anomaly/notifications)               │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                    VMAA v3 — WIDE_STOP Pipeline                  │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  Data Layer (yfinance 📈 + SEC 🏛️ + Tiger 🐅 + Tushare 🇨🇳)     │
+│         │                                                        │
+│         ▼                                                        │
+│  Stage 1: Part 1 — Quality Screening (7 criteria)                │
+│         │  → Quality Pool (~26% pass US, ~75% pass HK)           │
+│         ▼                                                        │
+│  Stage 2: Part 2 — MAGNA 53/10 Momentum                         │
+│         │  → Entry-ready Candidates                              │
+│         ▼                                                        │
+│  Stage 3: Part 3 — Sentiment Analysis (5 sources)                │
+│         │  → Filtered Buy Signals                                │
+│    ┌────┼────┐                                                   │
+│    ▼    ▼    ▼                                                   │
+│ 📐    🎯    💰   ← Optional Engines                              │
+│ Tech  Chip  Earnings                                             │
+│    └────┼────┘                                                   │
+│         ▼                                                        │
+│  Risk Management (Quarter-Kelly + WIDE_STOP)                     │
+│         │                                                        │
+│         ▼                                                        │
+│  Trade Decision (BUY/HOLD/AVOID)                                 │
+│         │                                                        │
+│         ▼                                                        │
+│  Tiger Trade Execution 🐅                                        │
+│                                                                  │
+└──────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## WIDE_STOP Strategy 🎯
+
+Winner of 8 backtest experiments (2026-05-07 tuning). The core insight: **partial fills destroy returns.**
+
+| Parameter | Old | **WIDE_STOP** | Why |
+|-----------|-----|:------------:|-----|
+| TP1 Exit | 30% at +12% | **100% at +15%** | Partial fills bled the remaining 70% |
+| Hard Stop | 15% | **25%** | Gives room for value mean-reversion |
+| Time Stop | 120 days | **Disabled** | Let trades fully play out |
+| Kelly Fraction | 0.25 | **0.15** | More conservative sizing |
+| Max Position | 20% | **18%** | Better diversification |
+| Max Concurrent | None | **5** | Prevents over-concentration |
+
+### Backtest Results (30 Liquid US Stocks, 2022-2024)
+
+| Period | SPY | VMAA WIDE_STOP | Max Drawdown | Profit Factor |
+|--------|:---:|:-------------:|:------------:|:-------------:|
+| 2022 Bear | -18.6% | **-9.7%** | -10.7% | — |
+| 2023-24 Bull | +58.8% | +35.8% | -7.5% | 3.14 |
+| **2022-24 Full** | +28.7% | **+15.5%** | -10.9% | 1.82 |
+
+VMAA outperforms SPY in bear markets (-9.7% vs -18.6%) while capturing ~60% of bull market upside with significantly lower drawdown.
 
 ---
 
@@ -53,16 +74,22 @@ Built for paper trading on Tiger Trade; live execution is opt-in.
 
 ```bash
 # US daily scan (cron: 21:00 HKT weekdays)
-python3 scripts/daily_scan.py
+python3 pipeline.py --full-scan
 
-# Full v3 pipeline with all engines
-python3 engine/demo.py --full
-
-# Backtest US
-python3 backtest/runner.py --tickers INMD,TMDX,CDRE --start 2023-01-01
+# US scan with sentiment (recommended)
+python3 pipeline.py --full-scan --sentiment
 
 # HK live scan
 python3 pipeline_hk.py --full-scan
+
+# HK with sentiment
+python3 pipeline_hk.py --full-scan --sentiment
+
+# Sentiment analysis for specific tickers
+python3 -c "from part3_sentiment import batch_sentiment; print(batch_sentiment(['AAPL','MSFT']))"
+
+# Backtest with WIDE_STOP config
+python3 backtest/runner.py --tickers INMD,TMDX,CDRE --start 2022-01-01
 
 # Backtest HK
 python3 backtest/hk/hk_runner.py --full-scan
@@ -84,56 +111,94 @@ python3 engine/demo.py --screen AAPL,MSFT
 | # | Criterion | Threshold | Purpose |
 |---|-----------|-----------|---------|
 | 1 | Market Cap | < $10B (turnaround) / < $250M (deep value) | Avoid mega-caps |
-| 2 | B/M, ROA, EBITDA | ≥ sector median × **1.1** (10% premium) | Quality vs peers |
-| 3 | FCF Yield | ≥ 2% | Cash generation |
-| 4 | Safety Margin (PTL) | ≤ 1.50x (52-week low proximity) | Entry near support |
+| 2 | Quality | B/M ≥ 0.3, ROA ≥ 0%, EBITDA margin ≥ 5% | Genuine value |
+| 3 | FCF Yield | ≥ 3% (target 8%) | Cash generation |
+| 4 | Safety Margin (PTL) | ≤ 1.30x (52-week low proximity) | Entry near support |
 | 5 | Asset Efficiency | ΔAssets < ΔEarnings | Capital discipline |
 | 6 | Interest Sensitivity | Flag high D/E, high beta, IR sectors | Macro awareness |
-| 7 | FCF/NI Conversion | ≥ 50% (weight: **20%** of score) | Earnings authenticity |
+| 7 | FCF/NI Conversion | ≥ 50% (weight: 20% of score) | Earnings authenticity |
 
 ### Stage 2: Part 2 — MAGNA 53/10 (Momentum)
 
 | Component | Signal | Weight | Entry Trigger |
-|-----------|--------|--------|---------------|
+|-----------|--------|:------:|---------------|
 | **M**assive Earnings Accel | EPS growth ↑ ≥ 20% + accel | 2 pts | M+A = Entry |
 | **A**cceleration of Sales | Revenue ↑ ≥ 10% + accel | 2 pts | M+A = Entry |
-| **G**ap Up | > 4% gap + **volume ≥ 1.5x avg** | 2 pts | G = Entry |
-| **N**eglect/Base | Sideways ≥ 6 months, ≤ 30% range | 1 pt | — |
+| **G**ap Up | > 4% gap + volume ≥ 1.5x avg | 2 pts | G = Entry |
+| **N**eglect/Base | Sideways ≥ 3mo, ≤ 30% range, declining vol | 1 pt | — |
 | **5** Short Interest | Ratio ≥ 3 (1pt) / ≥ 5 (2pts) | 0-2 pts | — |
 | **3** Analyst Target | ≥ 3 analysts, target ≥ 15% above | 1 pt | — |
 | Cap **10** | Market Cap < $10B | Prerequisite | — |
 | IPO **10** | Listed ≤ 10 years | Prerequisite | — |
 
-### Risk Management
+**Graduated Growth Scoring**: Partial credit for near-miss thresholds — produces 3× more signals than binary pass/fail.
 
-**Adaptive Stop (Phase 1 — 2026-05-06):**
-- Dynamic ATR multiplier based on price level (+1x for < $10 stocks)
-- Dynamic hard stop (15% base, 18% for < $30, 22% for < $10)
-- Market regime adjustment (HIGH vol → +0.5x ATR)
-- Near 52w-low → +0.5x ATR (room for bounce)
-- **Median stop selection** (not tightest — backtest showed 33% fewer stops)
+### Stage 3: Part 3 — Sentiment Analysis 🆕
 
-**Position Sizing:**
-- Fixed Fractional: 1.5% of portfolio × confidence scalar
-- Max position: 20% of portfolio
-- Market regime scalar (0.5-1.0x)
+**5-source multi-dimensional sentiment scoring** (weighted composite):
+
+| Source | Weight | Data | Purpose |
+|--------|:------:|------|---------|
+| Analyst Consensus | 25% | yfinance recommendations + targets | Professional outlook |
+| News Sentiment | 30% | VADER NLP on headlines | Real-time market narrative |
+| Social Buzz | 20% | Reddit mentions + trend | Retail sentiment |
+| Technical Sentiment | 15% | Price-momentum indicators | Market psychology |
+| Insider/Institutional | 10% | Ownership flow | Smart money tracking |
+
+**Composite Score**: -1.0 (max bearish) → +1.0 (max bullish)
+
+**Key Signals:**
+- 🟢 **CONTRARIAN_BUY**: Sentiment < -0.25 + strong fundamentals → Value opportunity (boosted entry)
+- 🟡 **CROWDED_TRADE**: Sentiment > 0.65 → Caution flag
+- 🔵 **SENTIMENT_DIVERGENCE**: Price ↓ but sentiment ↑ → Accumulation detected
+- 🔴 **BEARISH_REJECT**: Sentiment < -0.40 + weak fundamentals → Entry rejected
+
+**Modes:**
+- **Historical backtest**: Drawdown-aware analyst scoring, no look-ahead bias
+- **Live**: Real-time news headlines via yfinance + VADER NLP
+- Integrated into both `pipeline.py` (US) and `pipeline_hk.py` (HK)
+
+---
+
+## Risk Management — WIDE_STOP
+
+### Position Sizing (Quarter-Kelly)
+- Kelly fraction: **0.15** (conservative)
+- Max position: **18%** of portfolio
+- Max concurrent positions: **5**
+- Max per sector: **2**
+- Cash reserve: 15%
+
+### Stops
+- **Hard stop**: 25% (wide — allows mean-reversion to work)
+- **Trailing stop**: 12%, activates after +18% gain
+- **ATR multiplier**: 3.0× (wider breathing room)
+- **Time stop**: Disabled — no artificial exit deadline
+- **Market regime**: Stops widen +0.5× ATR in high volatility
+
+### Take Profit
+- **TP1**: +15% — **SELL 100%** (full exit, no partial fills)
+- **TP2**: +25% (secondary reference)
+- **TP3**: +40% (tertiary reference)
+
+> ⚠️ **The Lesson**: Selling 30% at +12% locked tiny wins while the remaining 70% bled out. Full exit at first meaningful target was the single biggest improvement in 8 backtest experiments.
 
 ---
 
 ## Markets
 
 ### 🇺🇸 US Market
-- **Strategy**: Quality Momentum
-- **Universe**: 85 mid-cap stocks (< $10B, liquid)
-- **Pass rate**: ~26% (22/85 quality)
-- **Cron**: Daily @ 21:00 HKT (13:00 UTC)
-- **Broker**: Tiger Trade paper/live
+- **Strategy**: Quality Value + MAGNA Momentum + Sentiment
+- **Universe**: S&P 500 (503 stocks)
+- **Pass rate**: ~26% quality → ~5 MAGNA → ~2 entry after sentiment
+- **Data**: yfinance + SEC EDGAR
+- **Broker**: Tiger Trade (paper + live)
 
 ### 🇭🇰 HK Market
-- **Strategy**: Value Yield
+- **Strategy**: Value Yield (HK-adapted)
 - **Universe**: 90 HSI constituents
-- **Pass rate**: ~75% (68/90 quality) — looser thresholds, financial bypass
-- **Data**: yfinance (.HK suffix)
+- **Pass rate**: ~75% quality, ~12 entry-ready
+- **Data**: yfinance (.HK suffix) + Tushare supplementary
 - **Currency**: HKD
 - **Broker**: Tiger Trade (pending)
 
@@ -150,42 +215,31 @@ python3 engine/demo.py --screen AAPL,MSFT
 | **Chip** | 2,332 | Volume Profile, Value Area, POC, cost distribution, money flow, S/R detection | `--chip` |
 | **Earnings** | 2,757 | Consensus, surprise history, rating changes, earnings calendar | `--earnings` |
 
-**Total: 20,906 engine lines** | **32K+ total codebase**
+**Total: 20,906 engine lines** | **32K+ total codebase including Part 3**
 
 ---
 
-## Backtest
+## Changelog
 
-### US Backtest
-```bash
-python3 backtest/runner.py --tickers <list> --mode monthly_rebalance
-python3 backtest/runner.py --mode weekly_rebalance  # More signals
-```
+### WIDE_STOP (2026-05-07)
+| # | Change | Impact |
+|---|--------|--------|
+| 1 | **TP1 full exit** — Sell 100% at +15% (was 30% at +12%) | #1 fix: partial fills destroyed returns |
+| 2 | **Hard stop 25%** (was 15%) | Allows value mean-reversion to work |
+| 3 | **Time stop disabled** | Trades play out fully, no artificial deadline |
+| 4 | **Quarter-Kelly 0.15** (was 0.25) | More conservative sizing |
+| 5 | **Part 3 Sentiment** — 5-source multi-dimensional analysis | Filters bearish traps, boosts contrarian buys |
+| 6 | **Max 5 concurrent** + 18% per position | Prevents over-concentration |
+| 7 | **Graduated MAGNA scoring** | 3× more signals than binary pass/fail |
+| 8 | **Volatility-based bear stops** | 50% wider stops in turbulent markets |
 
-**Latest results (adaptive stop, 48 stocks, 4yr 2022-2025):**
-| Metric | Tightest Stop | Median Stop | **Adaptive Stop** |
-|--------|:-------------:|:-----------:|:-----------------:|
-| Hard Stops | 6 (67%) | 4 (44%) | **2 (22%)** 🔥 |
-| Win Rate | 33% | 56% | 44% |
-| Profit Factor | 0.38 | 0.81 | **1.13** 🎯 |
-| Net P&L | -$473 | -$114 | **+$24** ✅ |
-
-### HK Backtest
-```bash
-python3 backtest/hk/hk_runner.py --full-scan
-python3 backtest/hk/hk_runner.py --tickers 0700.HK,0388.HK
-```
-
----
-
-## Structural Fixes (2026-05-05)
-
+### Structural Fixes (2026-05-05)
 | # | Fix | Impact |
 |---|-----|--------|
 | 1 | **Analyst tracker** — no false positives on first observation | MAGNA score integrity |
-| 2 | **G trigger** — replaced broken preMarketVolume with real volume check | G signal now works |
+| 2 | **G trigger** — real volume check replacing broken preMarketVolume | G signal now works |
 | 3 | **Sector comparison** — 10% premium (not just ">= median") | Better quality selection |
-| 4 | **Config weights** — FCF/NI 10%→20% per Royce spec | Aligned with requirements |
+| 4 | **Config weights** — FCF/NI 10%→20% | Aligned with requirements |
 | 5 | **Stop selection** — median instead of tightest | 33% fewer hard stops |
 | 6 | **Backtest engine** — uses live modules, no duplicate logic | Config changes propagate |
 
@@ -195,9 +249,10 @@ python3 backtest/hk/hk_runner.py --tickers 0700.HK,0388.HK
 
 ```
 Python 3.10+
-numpy, pandas, yfinance
+numpy, pandas, yfinance, vaderSentiment
 tigeropen (Tiger Trade SDK)
 requests (SEC EDGAR API)
+tushare (HK supplementary data)
 ```
 
 ---
@@ -207,7 +262,10 @@ requests (SEC EDGAR API)
 All thresholds in `config.py`:
 - `Part1Config` — Quality screening params
 - `Part2Config` — MAGNA scoring params
-- `RiskConfig` — Stop/sizing params
+- `RiskConfig` — WIDE_STOP strategy params
+- `PipelineConfig` — Operational settings
+
+Sentiment config in `part3_sentiment.py` (`SENT_CONFIG` dict).
 
 Engine configs in:
 - `engine/config.py` — Global engine settings
