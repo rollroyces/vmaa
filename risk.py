@@ -21,7 +21,7 @@ from models import (
 
 # Adaptive stop (Phase 1 — 2026-05-06)
 # Dynamically adjusts stop distance based on price level, volatility, market regime
-from risk_adaptive import compute_stops_adaptive as compute_stops
+from risk_adaptive import compute_stops_adaptive as compute_stops, compute_atr
 
 logger = logging.getLogger("vmaa.risk")
 
@@ -113,16 +113,18 @@ def compute_position_size(
     risk_pct = base_risk_pct * confidence_scalar
     
     risk_capital = portfolio_value * risk_pct
-    raw_shares = int(risk_capital / risk_per_share) if risk_per_share > 0 else 0
+    risk_shares = int(risk_capital / risk_per_share) if risk_per_share > 0 else 0
 
     # Allocation-based sizing (cap at max_position_pct)
     max_alloc = portfolio_value * RC.max_position_pct
     alloc_shares = int(max_alloc / entry_price) if entry_price > 0 else 0
 
     # Market-adjusted sizing
-    adj_shares = int(raw_shares * market.position_scalar)
+    market_shares = int(risk_shares * market.position_scalar)
 
-    quantity = min(raw_shares, alloc_shares, adj_shares)
+    # Median selection: balances risk-driven, allocation-cap, and market-adjusted views
+    quantities = [q for q in [risk_shares, alloc_shares, market_shares] if q > 0]
+    quantity = int(np.median(quantities)) if quantities else 0
     quantity = max(1, min(quantity, 10000))
 
     # Min/max position checks
@@ -158,7 +160,7 @@ def compute_stops(
     Returns: (stop_price, stop_type)
     """
     # 1. ATR-based stop (2.5x multiplier from config)
-    atr = _compute_atr(hist, 14)
+    atr = compute_atr(hist, 14)
     atr_stop = round(entry_price - (atr * RC.atr_stop_multiplier), 2) if atr > 0 else 0
 
     # 2. Hard stop (15% below entry)
@@ -493,20 +495,6 @@ def generate_trade_decision(
 # ═══════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════
-
-def _compute_atr(hist: pd.DataFrame, period: int = 14) -> float:
-    """Compute Average True Range."""
-    if len(hist) < period + 1:
-        return 0.0
-    high = hist['High']
-    low = hist['Low']
-    close = hist['Close']
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    return float(tr.tail(period).mean())
-
 
 def _compute_gap_entry(hist: pd.DataFrame, low_52w: float) -> float:
     """Entry 5% below gap day high (pullback entry after gap)."""

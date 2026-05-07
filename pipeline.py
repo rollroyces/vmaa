@@ -189,39 +189,21 @@ def run_stage1(tickers: List[str]) -> List:
     return quality_pool
 
 
-def run_stage2(quality_pool_tickers: List[str]) -> tuple:
+def run_stage2(quality_pool: List[Part1Result]) -> tuple:
     """
     Stage 2: MAGNA 53/10 Momentum Screening on quality pool.
-    Re-runs Part 1 to get full Part1Result objects for each ticker,
-    then runs Part 2 MAGNA.
-    
+    Receives Part1Result objects directly from Stage 1.
+
     Returns: (part1_results, part2_signals, candidates)
     """
     logger.info("\n" + "=" * 60)
     logger.info("STAGE 2: MAGNA 53/10 Momentum Signals")
     logger.info("=" * 60)
-    logger.info(f"Quality pool: {len(quality_pool_tickers)} stocks")
+    logger.info(f"Quality pool: {len(quality_pool)} stocks")
     logger.info(f"MAGNA: M(EPS↑) | A(Sales↑) | G(Gap>4%) | N(Base) | "
                 f"5(SI) | 3(Analyst) | Cap<$10B | IPO≤10yr")
 
-    # Re-run Part 1 to get full objects
-    quality_pool = []
-    logger.info("Refreshing Part 1 data for quality pool...")
-    for i, ticker in enumerate(quality_pool_tickers):
-        if (i + 1) % 30 == 0:
-            logger.info(f"  Refresh: {i+1}/{len(quality_pool_tickers)}")
-        try:
-            from part1_fundamentals import screen_fundamentals
-            p1 = screen_fundamentals(ticker)
-            if p1:
-                quality_pool.append(p1)
-        except Exception:
-            pass
-        time.sleep(0.12)
-
-    logger.info(f"  {len(quality_pool)}/{len(quality_pool_tickers)} still pass Part 1")
-
-    # Run Part 2 MAGNA
+    # Run Part 2 MAGNA using Part1Result objects directly (no re-fetch)
     signals = part2_batch(quality_pool)
 
     # Combine into candidates
@@ -282,6 +264,14 @@ def run_risk_and_execute(
     portfolio_value = account.net_liquidation
     existing_tickers = [p.symbol for p in existing_positions]
 
+    # Build sector cache for existing positions (avoid redundant yfinance calls)
+    existing_sectors = {}
+    for p in existing_positions:
+        try:
+            existing_sectors[p.symbol] = yf.Ticker(p.symbol).info.get('sector', 'Unknown')
+        except Exception:
+            existing_sectors[p.symbol] = 'Unknown'
+
     decisions = []
     executed = []
     skipped = []
@@ -289,10 +279,10 @@ def run_risk_and_execute(
     for c in candidates:
         ticker = c.ticker
 
-        # Sector check
+        # Sector check (uses candidate's sector + existing position sector cache)
         sector_count = sum(
             1 for p in existing_positions
-            if _sector_of(p.symbol) == c.part1.sector
+            if existing_sectors.get(p.symbol, 'Unknown') == c.part1.sector
         )
         if sector_count >= RiskCfg.max_positions_per_sector:
             skipped.append((ticker, f"Sector limit ({c.part1.sector})"))
@@ -347,47 +337,41 @@ def _execute_decision(decision, broker, account, dry_run: bool) -> Dict[str, Any
     cost = decision.quantity * decision.entry_price
 
     if cost > account.buying_power * 0.85:
-        return {'executed': False, 'reason': f"Cost ${cost:.0f} > 85% BP"}
+        return {'executed': False, 'would_execute': False,
+                'reason': f"Cost ${cost:.0f} > 85% BP"}
 
     cash_after = account.cash - cost
     if cash_after < account.net_liquidation * 0.15:
-        return {'executed': False, 'reason': "Breaks cash reserve"}
+        return {'executed': False, 'would_execute': False,
+                'reason': "Breaks cash reserve"}
 
     if dry_run:
-        return {'executed': True, 'reason': 'dry_run'}
-    else:
-        # Live execution via Tiger
-        try:
-            result = broker.place_order(
-                symbol=decision.ticker,
-                action='BUY',
-                quantity=decision.quantity,
-                order_type='LMT',
-                limit_price=decision.entry_price,
-            )
-            if result.order_id > 0:
-                # Place stop loss
-                broker.place_order(
-                    symbol=decision.ticker,
-                    action='SELL',
-                    quantity=decision.quantity,
-                    order_type='STP',
-                    stop_price=decision.stop_loss,
-                )
-                return {'executed': True, 'reason': 'live'}
-            else:
-                return {'executed': False, 'reason': f"Order rejected: {result.status}"}
-        except Exception as e:
-            return {'executed': False, 'reason': str(e)}
+        return {'executed': True, 'would_execute': True, 'reason': 'dry_run'}
 
-
-def _sector_of(ticker: str) -> str:
-    """Quick sector lookup."""
+    # Live execution via Tiger
     try:
-        info = yf.Ticker(ticker).info
-        return info.get('sector', 'Unknown')
-    except Exception:
-        return 'Unknown'
+        result = broker.place_order(
+            symbol=decision.ticker,
+            action='BUY',
+            quantity=decision.quantity,
+            order_type='LMT',
+            limit_price=decision.entry_price,
+        )
+        if result.order_id > 0:
+            # Place stop loss
+            broker.place_order(
+                symbol=decision.ticker,
+                action='SELL',
+                quantity=decision.quantity,
+                order_type='STP',
+                stop_price=decision.stop_loss,
+            )
+            return {'executed': True, 'would_execute': True, 'reason': 'live'}
+        else:
+            return {'executed': False, 'would_execute': True,
+                    'reason': f"Order rejected: {result.status}"}
+    except Exception as e:
+        return {'executed': False, 'would_execute': True, 'reason': str(e)}
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -503,8 +487,7 @@ def run_full_pipeline(
     save_quality_pool(quality_pool)
 
     # ── Stage 2: Part 2 MAGNA ──
-    quality_tickers = [p.ticker for p in quality_pool]
-    _, signals, candidates = run_stage2(quality_tickers)
+    _, signals, candidates = run_stage2(quality_pool)
 
     # ── Stage 3: Sentiment Analysis ──
     candidates = run_sentiment(candidates)
@@ -709,7 +692,21 @@ if __name__ == '__main__':
             if not pool_tickers:
                 print("❌ No quality pool found. Run --scan-part1 first.")
                 sys.exit(1)
-            quality_pool, signals, candidates = run_stage2(pool_tickers)
+
+            # Reconstruct Part1Result objects from saved quality pool
+            from part1_fundamentals import screen_fundamentals
+            part1_results = []
+            print(f"Refreshing Part 1 data for {len(pool_tickers)} quality-pool stocks...")
+            for ticker in pool_tickers:
+                try:
+                    p1 = screen_fundamentals(ticker)
+                    if p1:
+                        part1_results.append(p1)
+                except Exception:
+                    pass
+            print(f"  {len(part1_results)}/{len(pool_tickers)} still pass Part 1")
+
+            quality_pool, signals, candidates = run_stage2(part1_results)
 
             from broker.tiger_broker import TigerBroker
             market = get_market_regime()

@@ -112,7 +112,7 @@ def _basic_checks(info: dict, hist: pd.DataFrame) -> bool:
     if hist is None or len(hist) < 20:
         return False
 
-    price = _get_price(info)
+    price = get_price_from_info(info)
     if price <= 0 or price < P1C.min_price:
         return False
 
@@ -200,7 +200,7 @@ def _check_quality(info: dict, price: float, sector_medians: dict = None) -> Dic
         bm_score = min(result['bm'] / P1C.target_bm_ratio, 1.0)
         q_score += bm_score * P1C.weight_bm
     if result['roa_pass']:
-        roa_score = min(result['roa'] / P1C.target_roa, 1.0) if P1C.target_roa > 0 else 0.5
+        roa_score = min(result['roa'] / P1C.target_roa, 1.0) if P1C.target_roa > 0 else 0
         q_score += roa_score * P1C.weight_roa
     if result['ebitda_pass']:
         ebitda_score = min(result['ebitda_margin'] / P1C.target_ebitda_margin, 1.0)
@@ -308,6 +308,7 @@ def _check_asset_efficiency(t: yf.Ticker) -> Tuple[bool, float, float, float, st
             return False, 0.0, 0.0, 0.0, "n/a"
 
         # YoY growth rates
+        # yfinance quarterly data: .iloc[0] = most recent quarter, .iloc[1] = prior quarter
         assets_latest = float(total_assets.iloc[0])
         assets_prev = float(total_assets.iloc[1])
         ni_latest = float(net_income.iloc[0])
@@ -378,7 +379,19 @@ def _check_earnings_authenticity(info: dict) -> Tuple[bool, float, float]:
         passed = fcf > 0
         return passed, 0.0, P1C.weight_fcf_conversion * 0.5 if passed else 0.0
 
-    fcf_ni = fcf / ni if ni > 0 else (fcf / abs(ni) if fcf > 0 else 0)
+    if ni < 0:
+        # Negative net income: earnings are not authentic regardless of FCF.
+        # Positive FCF with negative NI can happen temporarily (working cap
+        # changes, delayed capex) but does not indicate sustainable earnings
+        # quality. A money-losing company should NEVER get a high earnings
+        # authenticity score.
+        fcf_ni = 0.0
+        if fcf > 0:
+            # For informational purposes only: show FCF/abs(NI) capped at 0.2
+            fcf_ni = min(fcf / abs(ni), 0.2)
+        return False, round(fcf_ni, 4), 0.0
+
+    fcf_ni = fcf / ni
     # Cap at 2.0 (more than 2x NI in FCF is unusual but positive)
     fcf_ni = min(fcf_ni, 2.0)
 
@@ -399,7 +412,7 @@ def _evaluate_part1(ticker: str, info: dict, hist: pd.DataFrame,
     Uses sector_medians for relative comparison when provided (C2).
     Returns Part1Result if quality_score >= min_quality_score, else None.
     """
-    price = _get_price(info)
+    price = get_price_from_info(info)
     passed_criteria: List[str] = []
     failed_criteria: List[str] = []
     warnings: List[str] = []
@@ -533,8 +546,12 @@ def _evaluate_part1(ticker: str, info: dict, hist: pd.DataFrame,
 # Helpers
 # ═══════════════════════════════════════════════════════════════════
 
-def _get_price(info: dict) -> float:
-    """Extract current price from yfinance info dict."""
+def get_price_from_info(info: dict) -> float:
+    """Extract current price from yfinance info dict.
+
+    Works across multiple yfinance field names. Use this canonical
+    implementation instead of inlining price extraction elsewhere.
+    """
     return float(
         info.get('regularMarketPrice') or
         info.get('currentPrice') or
@@ -571,7 +588,7 @@ def compute_sector_medians(tickers: List[str],
         try:
             info = yf.Ticker(ticker).info
             sector = info.get('sector', 'Other')
-            price = _get_price(info)
+            price = get_price_from_info(info)
             bv = info.get('bookValue', 0)
             roa = info.get('returnOnAssets')
             ebitda = info.get('ebitda', 0)

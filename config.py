@@ -18,7 +18,7 @@ from typing import List
 # Part 1: Core Financial Fundamentals Thresholds
 # ═══════════════════════════════════════════════════════════════════
 
-@dataclass
+@dataclass(frozen=True)
 class Part1Config:
     """Thresholds for Stage 1 — Quality & Value screening."""
 
@@ -91,7 +91,7 @@ class Part1Config:
 # Part 2: MAGNA 53/10 Thresholds
 # ═══════════════════════════════════════════════════════════════════
 
-@dataclass
+@dataclass(frozen=True)
 class Part2Config:
     """Thresholds for Stage 2 — MAGNA 53/10 momentum screening."""
 
@@ -153,7 +153,7 @@ class Part2Config:
 # Risk Management
 # ═══════════════════════════════════════════════════════════════════
 
-@dataclass
+@dataclass(frozen=True)
 class RiskConfig:
     """Comprehensive risk management parameters."""
 
@@ -170,6 +170,10 @@ class RiskConfig:
     kelly_fraction: float = 0.15
     min_position_size: float = 500.0
     max_position_size: float = 80000.0
+
+    # HK market position limits
+    max_position_size_hkd: float = 80000.0
+    max_shares_hk: int = 5000
 
     # Entry
     max_slippage_pct: float = 0.02
@@ -200,7 +204,7 @@ class RiskConfig:
 # Pipeline Operational Config
 # ═══════════════════════════════════════════════════════════════════
 
-@dataclass
+@dataclass(frozen=True)
 class PipelineConfig:
     """Operational parameters for the pipeline runner."""
 

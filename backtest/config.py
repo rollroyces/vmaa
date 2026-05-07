@@ -77,6 +77,8 @@ class BacktestConfig:
 
     # ── Cost Model ──
     slippage: SlippageConfig = field(default_factory=SlippageConfig)
+    # Entry slippage penalty when next-day open is unavailable (0.005 = 0.5%)
+    entry_slippage_pct: float = 0.005
 
     # ── Universe ──
     # If empty, will use the pipeline's default universe

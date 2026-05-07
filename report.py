@@ -21,8 +21,8 @@ def generate_report(data: dict) -> str:
     add(f"Market: {'✅ BULL' if market.get('market_ok') else '⚠️ CAUTION'} | "
         f"Vol: {market.get('vol_regime', '?')} | "
         f"SPY: ${market.get('spy_price', 0):.2f}")
-    add(f"Candidates: {pipeline.get('candidates_found', 0)} | "
-        f"Decisions: {pipeline.get('decisions_made', 0)} | "
+    add(f"Candidates: {pipeline.get('candidates', 0)} | "
+        f"Decisions: {pipeline.get('decisions', 0)} | "
         f"Executed: {pipeline.get('executed', 0)} | "
         f"Skipped: {pipeline.get('skipped', 0)}")
     add('')

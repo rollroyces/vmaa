@@ -33,6 +33,7 @@ import yfinance as yf
 
 from config import P2C
 from models import Part1Result, Part2Signal
+from part1_fundamentals import get_price_from_info
 
 logger = logging.getLogger("vmaa.part2")
 
@@ -102,7 +103,7 @@ def batch_screen_magna(quality_pool: List[Part1Result]) -> List[Part2Signal]:
 # M: Massive Earnings Acceleration
 # ═══════════════════════════════════════════════════════════════════
 
-def _check_earnings_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
+def check_earnings_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
     """
     Check for massive earnings acceleration.
     Compares latest quarter EPS growth vs previous quarter.
@@ -155,7 +156,7 @@ def _check_earnings_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
 # A: Acceleration of Sales
 # ═══════════════════════════════════════════════════════════════════
 
-def _check_sales_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
+def check_sales_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
     """
     Check for revenue acceleration.
     Compares latest quarter revenue growth vs previous quarter.
@@ -226,24 +227,35 @@ def _check_gap_up(hist: pd.DataFrame, info: dict) -> Tuple[bool, bool, float, in
     lookback = min(P2C.gap_lookback_days, len(hist) - 1)
 
     recent = hist.tail(lookback + 1)
+    best_gap = 0.0
+    best_gap_day_volume = 0
+    best_gap_idx = -1
+
     for i in range(1, len(recent)):
         prev_close = float(recent['Close'].iloc[i-1])
         curr_open = float(recent['Open'].iloc[i])
         if prev_close > 0:
             gap = (curr_open - prev_close) / prev_close
             if gap >= P2C.gap_min_pct:
-                gap_detected = True
-                gap_pct = max(gap_pct, gap)
-                # Get the gap day's volume
-                gap_day_volume = int(recent['Volume'].iloc[i])
-                # Check if gap day volume ≥ 1.5x 20-day average
-                # (replaces broken preMarketVolume check)
-                vol_window = recent['Volume'].iloc[max(0, i-20):i]
-                if len(vol_window) >= 5:
-                    avg_vol_20d = float(vol_window.mean())
-                    if avg_vol_20d > 0:
-                        volume_confirmed = gap_day_volume >= avg_vol_20d * P2C.gap_volume_multiplier
-                break
+                gap_day_vol = int(recent['Volume'].iloc[i])
+                # Track best (gap × volume) combination instead of first match
+                if gap * gap_day_vol > best_gap * best_gap_day_volume:
+                    best_gap = gap
+                    best_gap_day_volume = gap_day_vol
+                    best_gap_idx = i
+                    gap_detected = True
+
+    # After scanning all bars, verify volume for the best gap
+    volume_confirmed = False
+    if gap_detected:
+        gap_pct = best_gap
+        gap_day_volume = best_gap_day_volume
+        # Check if best gap day volume ≥ 1.5x 20-day average
+        vol_window = recent['Volume'].iloc[max(0, best_gap_idx - 20):best_gap_idx]
+        if len(vol_window) >= 5:
+            avg_vol_20d = float(vol_window.mean())
+            if avg_vol_20d > 0:
+                volume_confirmed = gap_day_volume >= avg_vol_20d * P2C.gap_volume_multiplier
 
     return gap_detected, volume_confirmed, round(gap_pct, 4), gap_day_volume
 
@@ -392,11 +404,9 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
     Run all MAGNA 53/10 checks and compute composite score.
     Entry is triggered when G fires OR M+A both fire.
     """
-    price = float(info.get('regularMarketPrice') or
-                  info.get('currentPrice') or
-                  info.get('previousClose', 0))
+    price = get_price_from_info(info)
 
-    magna_score = 0
+    magna_score = 0.0
     trigger_signals: List[str] = []
     details: Dict[str, Any] = {}
 
@@ -421,7 +431,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
             logger.debug(f"  {ticker}: IPO > 10yr ({ipo_years:.0f}yr), soft flag (not rejected)")
 
     # ── M: Earnings Acceleration (graduated scoring) ──
-    m_pass, eps_curr, eps_prev, eps_accel = _check_earnings_accel(t)
+    m_pass, eps_curr, eps_prev, eps_accel = check_earnings_accel(t)
     # Graduated EPS score: 20%+=2pt, 15%+=1.5pt, 10%+=1pt, 5%+=0.5pt
     eps_growth_rate = eps_curr if eps_curr > 0 else 0
     eps_score = 0.0
@@ -430,23 +440,23 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
     elif eps_growth_rate >= 0.10: eps_score = 1.0
     elif eps_growth_rate >= 0.05: eps_score = 0.5
     if m_pass:
-        magna_score += max(P2C.magna_points['m_earnings_accel'], int(eps_score))
+        magna_score += max(P2C.magna_points['m_earnings_accel'], eps_score)
     elif eps_score > 0:
-        magna_score += int(eps_score)
+        magna_score += eps_score
     if eps_score >= 0.5:
         trigger_signals.append(f'M({eps_score:.1f})')
 
     # ── A: Sales Acceleration (graduated scoring) ──
-    a_pass, rev_curr, rev_prev, rev_accel = _check_sales_accel(t)
+    a_pass, rev_curr, rev_prev, rev_accel = check_sales_accel(t)
     # Graduated sales score: 10%+=2pt, 8%+=1.5pt, 5%+=1pt
     sales_score = 0.0
     if rev_curr >= 0.10: sales_score = 2.0
     elif rev_curr >= 0.08: sales_score = 1.5
     elif rev_curr >= 0.05: sales_score = 1.0
     if a_pass:
-        magna_score += max(P2C.magna_points['a_sales_accel'], int(sales_score))
+        magna_score += max(P2C.magna_points['a_sales_accel'], sales_score)
     elif sales_score > 0:
-        magna_score += int(sales_score)
+        magna_score += sales_score
     if sales_score >= 0.5:
         trigger_signals.append(f'A({sales_score:.1f})')
 
@@ -462,7 +472,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
             elif mom_3m >= 0.05: price_momentum = 0.5
             details['price_momentum_3m'] = round(mom_3m, 4)
     if price_momentum > 0:
-        magna_score += int(price_momentum)
+        magna_score += price_momentum
         trigger_signals.append(f'PM({price_momentum:.1f})')
 
     # ── G: Gap Up ──
@@ -506,7 +516,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
         trigger_signals.append(f'A[{analyst_count}]·')
 
     # ── Composite ──
-    magna_score = min(magna_score, 10)
+    magna_score = round(min(magna_score, 10), 1)
 
     # ── Entry Trigger Logic (graduated) ──
     # Entry ready if: (growth composite >= 2.5) or gap confirmed or both M+A binary

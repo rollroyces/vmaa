@@ -268,14 +268,21 @@ class HistoricalDataLoader:
         info = self._info_cache.get(ticker, {})
         # Shares for per-share calculations
         shares = info.get('sharesOutstanding', 0) or info.get('impliedSharesOutstanding', 0) or 0
-        # Market cap: adjust current market cap by price ratio
-        # (ignores share dilution/buybacks — best available without paid data)
-        current_price = info.get('currentPrice') or info.get('regularMarketPrice', 0) or 0
-        current_mcap = info.get('marketCap', 0) or 0
-        if current_mcap > 0 and current_price > 0:
-            market_cap = current_mcap * (float(row['Close']) / current_price)
+        # Market cap: shares × historical price.
+        # NOTE: Uses *current* shares outstanding from yfinance info — does
+        # NOT account for historical buybacks, splits, or dilution.  Paid
+        # data (Bloomberg / FactSet) would be needed for true historical
+        # share counts.  yfinance does not expose time-series shares.
+        if shares > 0:
+            market_cap = shares * float(row['Close'])
         else:
-            market_cap = float(row['Close']) * shares if shares > 0 else 0
+            # Ultimate fallback: scale current market cap by price ratio
+            current_price = info.get('currentPrice') or info.get('regularMarketPrice', 0) or 0
+            current_mcap = info.get('marketCap', 0) or 0
+            if current_mcap > 0 and current_price > 0:
+                market_cap = current_mcap * (float(row['Close']) / current_price)
+            else:
+                market_cap = 0
 
         # ── Fundamentals: extract from financial statements ──
         bs = self._fin_cache.get(ticker, {}).get('balance_sheet')
@@ -338,10 +345,22 @@ class HistoricalDataLoader:
         if roe is None and book_value > 0 and net_income:
             roe = net_income / book_value
 
-        # D/E: from info or compute
+        # D/E: from info or compute.
+        # total_debt is in raw dollars; must divide by *total* equity
+        # (not per-share book value) to produce a meaningful ratio.
         debt_to_equity = info.get('debtToEquity', 0) or 0
-        if not debt_to_equity and book_value > 0 and total_debt > 0:
-            debt_to_equity = (total_debt / book_value) * 100
+        if not debt_to_equity:
+            total_equity_de = self._extract_from_stmt(bs, [
+                'Total Stockholder Equity', 'StockholdersEquity',
+                'TotalEquityGrossMinorityInterest',
+                'Common Stock Equity',
+                'Stockholders Equity',
+                'Total Equity Gross Minority Interest',
+            ])
+            if not total_equity_de:
+                total_equity_de = info.get('totalStockholderEquity', 0) or 0
+            if total_equity_de and total_equity_de > 0 and total_debt > 0:
+                debt_to_equity = (total_debt / total_equity_de) * 100
 
         # Prior period (use same as current for want of better data)
         ni_prev = net_income

@@ -104,7 +104,7 @@ class Part2Signal:
     ipo_years: Optional[float] = None    # Years since IPO
 
     # Composite
-    magna_score: int = 0                 # 0–10 composite score
+    magna_score: float = 0.0             # 0–10 composite score (graduated, half-point increments)
     trigger_signals: List[str] = field(default_factory=list)  # Which signals fired
     entry_ready: bool = False            # True when G or MA triggers fire
 
@@ -133,7 +133,7 @@ class VMAACandidate:
         return self.part1.quality_score
 
     @property
-    def magna_score(self) -> int:
+    def magna_score(self) -> float:
         return self.part2.magna_score
 
 

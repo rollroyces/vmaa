@@ -76,6 +76,9 @@ class SentimentResult:
 
     signals: List[str] = field(default_factory=list)
     sources_available: int = 0
+    data_quality: str = "ok"
+    news_extreme_neg_ratio: float = 0.0
+    news_extreme_pos_ratio: float = 0.0
     data_date: str = ""
 
 
@@ -153,8 +156,10 @@ def _analyst_sentiment(ticker: str) -> Dict[str, Any]:
             upside = (target_mean - current) / current
         upside_adj = np.clip(upside / 0.20 * 0.30, -0.30, 0.30)
         score = rec_score * 0.70 + upside_adj
+        # Square-root decay: gentler penalty for small analyst coverage.
+        # count=1 → 0.58x, count=2 → 0.82x, count=3 → 1.0x
         if analyst_count < 3:
-            score *= (analyst_count / 3)
+            score *= min(1.0, (analyst_count / 3) ** 0.5)
         score = round(np.clip(score, -1.0, 1.0), 3)
         return {'score': score, 'consensus': recommendation, 'count': analyst_count,
                 'target_mean': target_mean, 'upside_pct': round(upside, 4) if upside != 0 else 0}
@@ -211,31 +216,74 @@ def _news_sentiment(ticker: str) -> Dict[str, Any]:
         return {'score': 0.0, 'count': 0, 'positive_pct': 0, 'negative_pct': 0,
                 'neutral_pct': 0, 'summary': ''}
 
+    # VADER is a general-purpose sentiment tool. Financial news sentiment should
+    # ideally use FinBERT or a financial-domain model. VADER scores are used as a
+    # supplementary signal only.
     analyzer = _get_vader()
     if not analyzer:
         scores = [_simple_sentiment(h) for h in headlines]
+        simple_scores = scores  # same scores when VADER unavailable
     else:
         scores = [analyzer.polarity_scores(h)['compound'] for h in headlines]
+        simple_scores = [_simple_sentiment(h) for h in headlines]
+
+    # Detect VADER vs financial-dictionary conflicts
+    conflict_count = 0
+    for v, s_score in zip(scores, simple_scores):
+        if (v > 0.05 and s_score < -0.05) or (v < -0.05 and s_score > 0.05):
+            conflict_count += 1
 
     avg_score = np.mean(scores) if scores else 0.0
     positive = sum(1 for s in scores if s > 0.05)
     negative = sum(1 for s in scores if s < -0.05)
     neutral = len(scores) - positive - negative
     total = max(len(scores), 1)
+
+    # Extreme-ratio detection — a plain mean masks panic/euphoria clusters
+    extreme_neg_ratio = round(sum(1 for s in scores if s < -0.5) / total, 3)
+    extreme_pos_ratio = round(sum(1 for s in scores if s > 0.5) / total, 3)
+
     summary = _extract_theme(headlines)
 
     return {'score': round(np.clip(avg_score, -1.0, 1.0), 3), 'count': len(headlines),
             'positive_pct': round(positive / total, 3), 'negative_pct': round(negative / total, 3),
-            'neutral_pct': round(neutral / total, 3), 'summary': summary}
+            'neutral_pct': round(neutral / total, 3), 'summary': summary,
+            'extreme_neg_ratio': extreme_neg_ratio, 'extreme_pos_ratio': extreme_pos_ratio,
+            'conflict_count': conflict_count}
 
 
 def _simple_sentiment(text: str) -> float:
-    positive_words = {'beat', 'raise', 'upgrade', 'surge', 'jump', 'rally', 'growth',
-                      'profit', 'record', 'strong', 'bullish', 'outperform', 'buy',
-                      'positive', 'gain', 'higher', 'boost', 'breakthrough', 'expansion'}
-    negative_words = {'miss', 'cut', 'downgrade', 'plunge', 'drop', 'crash', 'decline',
-                      'loss', 'weak', 'bearish', 'underperform', 'sell', 'negative',
-                      'risk', 'concern', 'warning', 'layoff', 'restructuring', 'debt'}
+    # Financial-domain sentiment dictionary (~90 terms).
+    # VADER is trained on social media / movie reviews and can miss financial nuance.
+    # This fallback catches domain-specific terms VADER may misinterpret.
+    positive_words = {
+        'beat', 'raise', 'upgrade', 'surge', 'jump', 'rally', 'growth',
+        'profit', 'record', 'strong', 'bullish', 'outperform', 'buy',
+        'positive', 'gain', 'higher', 'boost', 'breakthrough', 'expansion',
+        # Financial-domain bullish terms
+        'beat estimates', 'raised guidance', 'buyback', 'dividend increase',
+        'fda approval', 'contract win', 'partnership', 'market share gain',
+        'record revenue', 'profit beat', 'accelerating growth', 'margin expansion',
+        'cost reduction', 'share repurchase', 'special dividend', 'spin-off',
+        'strategic review', 'activist investor', 'price target raised',
+        'earnings surprise', 'guidance raised', 'positive pre-announcement',
+        'revenue beat', 'subscriber growth', 'expanding margins',
+    }
+    negative_words = {
+        'miss', 'cut', 'downgrade', 'plunge', 'drop', 'crash', 'decline',
+        'loss', 'weak', 'bearish', 'underperform', 'sell', 'negative',
+        'risk', 'concern', 'warning', 'layoff', 'restructuring', 'debt',
+        # Financial-domain bearish terms
+        'cuts guidance', 'margin compression', 'inventory destocking',
+        'impairment', 'write-down', 'delisting', 'bankruptcy',
+        'default', 'liquidity crunch', 'cash burn', 'debt restructuring',
+        'missed estimates', 'revenue decline', 'profit warning',
+        'sec investigation', 'lawsuit', 'regulatory fine', 'going concern',
+        'covenant breach', 'credit downgrade', 'share dilution',
+        'supply chain disruption', 'customer loss', 'patent expiration',
+        'pipeline failure', 'clinical hold', 'recall', 'accounting irregularity',
+        'suspension', 'force majeure', 'asset sale', 'filing delay',
+    }
     text_lower = text.lower()
     pos_count = sum(1 for w in positive_words if w in text_lower)
     neg_count = sum(1 for w in negative_words if w in text_lower)
@@ -450,6 +498,12 @@ def analyze_sentiment(ticker: str) -> SentimentResult:
     result.news_negative_pct = n['negative_pct']
     result.news_neutral_pct = n['neutral_pct']
     result.news_summary = n['summary']
+    result.news_extreme_neg_ratio = n.get('extreme_neg_ratio', 0.0)
+    result.news_extreme_pos_ratio = n.get('extreme_pos_ratio', 0.0)
+    news_conflict = (
+        n.get('conflict_count', 0) >= n.get('count', 0) * 0.3
+        and n.get('count', 0) >= 3
+    )
     if n['count'] >= cfg.min_news_articles:
         available += 1
         total_weight += cfg.weight_news
@@ -479,9 +533,10 @@ def analyze_sentiment(ticker: str) -> SentimentResult:
     result.sources_available = available
 
     if total_weight > 0:
+        news_wf = 0.5 if news_conflict else 1.0  # halve news weight on VADER/dict conflict
         composite = (
             result.analyst_score * (cfg.weight_analyst / total_weight) +
-            result.news_score * (cfg.weight_news / total_weight) +
+            result.news_score * (cfg.weight_news / total_weight) * news_wf +
             result.social_score * (cfg.weight_social / total_weight) +
             result.technical_score * (cfg.weight_technical / total_weight) +
             result.insider_score * (cfg.weight_insider / total_weight)
@@ -513,10 +568,12 @@ def analyze_sentiment(ticker: str) -> SentimentResult:
             signals.append("SENTIMENT_DIVERGENCE_POSITIVE")
         elif result.technical_score > 0.2 and result.composite_score < -0.2:
             signals.append("SENTIMENT_DIVERGENCE_NEGATIVE")
-    if result.news_negative_pct > 0.60 and result.news_headline_count >= 5:
+    if result.news_extreme_neg_ratio > 0.30:
         signals.append("NEWS_EXTREME_NEGATIVE")
-    if result.news_positive_pct > 0.60 and result.news_headline_count >= 5:
+    if result.news_extreme_pos_ratio > 0.30:
         signals.append("NEWS_EXTREME_POSITIVE")
+    if news_conflict:
+        signals.append("SENTIMENT_CONFLICT")
     if result.analyst_target_upside_pct > 0.25 and result.analyst_count >= 3:
         signals.append("HIGH_ANALYST_UPSIDE")
     if result.social_trend == 'rising' and result.social_mentions >= 10:
@@ -532,11 +589,20 @@ def batch_sentiment(tickers: List[str], delay: float = 0.15,
     for i, ticker in enumerate(tickers):
         if (i + 1) % progress_every == 0:
             logger.info(f"  Sentiment: {i+1}/{len(tickers)}")
-        try:
-            results[ticker] = analyze_sentiment(ticker)
-        except Exception as e:
-            logger.warning(f"Sentiment failed for {ticker}: {e}")
-            results[ticker] = SentimentResult(ticker=ticker)
+        for attempt in range(2):
+            try:
+                result = analyze_sentiment(ticker)
+                results[ticker] = result
+                break
+            except Exception as e:
+                if attempt == 0:
+                    time.sleep(2)
+                else:
+                    logger.warning(f"Sentiment failed for {ticker} after retry: {e}")
+                    result = SentimentResult(ticker=ticker, sources_available=0)
+                    result.data_quality = "missing"
+                    result.signals.append("SENTIMENT_DATA_MISSING")
+                    results[ticker] = result
         time.sleep(delay)
     return results
 
@@ -735,8 +801,9 @@ def _analyst_from_info(info: Dict, ticker: str = "") -> Dict[str, Any]:
     rec_score = rec_map.get(str(recommendation).lower(), 0.0)
     upside_adj = np.clip(((target_mean - current) / current) / 0.20 * 0.30, -0.30, 0.30) if target_mean > 0 and current > 0 else 0.0
     score = rec_score * 0.70 + upside_adj
-    if analyst_count < 3:
-        score *= (analyst_count / 3) if analyst_count > 0 else 0
+    # Square-root decay: gentler penalty for small analyst coverage
+    if analyst_count < 3 and analyst_count > 0:
+        score *= min(1.0, (analyst_count / 3) ** 0.5)
     upside = ((target_mean - current) / current) if target_mean > 0 and current > 0 else 0.0
     return {'score': round(np.clip(score, -1.0, 1.0), 3), 'consensus': str(recommendation),
             'count': analyst_count, 'target_mean': target_mean,

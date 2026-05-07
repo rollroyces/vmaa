@@ -26,13 +26,33 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Reuse VMAA MAGNA Part 2
 from part2_magna import screen_magna as part2_screen
+from part2_magna import check_earnings_accel, check_sales_accel
 from models import Part1Result
+from config import RC
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
 logger = logging.getLogger("vmaa.hk")
+
+
+def np_safe(obj):
+    """Convert numpy scalar/array types to native Python types for JSON serialization.
+
+    Handles: np.integer → int, np.floating → float, np.ndarray → list, np.bool_ → bool.
+    Returns the object unchanged if it is not a numpy type.
+    """
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.bool_):
+        return bool(obj)
+    return obj
+
 
 # ═══════════════════════════════════════════════════════════════════
 # HSI Constituents
@@ -359,17 +379,16 @@ def screen_hk_magna(ticker, quality):
         triggers = []
         details = {}
 
-        # ── M: Earnings Acceleration (from yfinance info) ──
-        earnings_growth = float(info.get('earningsGrowth', 0) or 0)
-        rev_growth = float(info.get('revenueGrowth', 0) or 0)
-
-        eps_accel = earnings_growth >= 0.15
+        # ── M: Earnings Acceleration (from quarterly financials, same as US path) ──
+        m_pass, eps_curr, eps_prev, eps_accel_val = check_earnings_accel(t)
+        eps_accel = m_pass
         if eps_accel:
             score += 2
             triggers.append("M")
 
-        # ── A: Sales Acceleration ──
-        sales_accel = rev_growth >= 0.10
+        # ── A: Sales Acceleration (from quarterly financials, same as US path) ──
+        a_pass, rev_curr, rev_prev, rev_accel_val = check_sales_accel(t)
+        sales_accel = a_pass
         if sales_accel:
             score += 2
             triggers.append("A")
@@ -418,8 +437,10 @@ def screen_hk_magna(ticker, quality):
 
         details['analyst_count'] = analyst_count
         details['target_mean'] = round(target_mean, 2)
-        details['earnings_growth'] = round(earnings_growth, 4)
-        details['rev_growth'] = round(rev_growth, 4)
+        details['eps_growth_qoq'] = round(eps_curr, 4)
+        details['eps_accel'] = round(eps_accel_val, 4)
+        details['rev_growth_qoq'] = round(rev_curr, 4)
+        details['rev_accel'] = round(rev_accel_val, 4)
         details['gap'] = gap_up
         details['base'] = is_base
 
@@ -507,7 +528,7 @@ def compute_hk_trade_decision(
 
     if magna_signal and magna_signal.entry_ready:
         action = "BUY"
-        position_size = min(int(80000 * scalar / price), 5000)
+        position_size = min(int(RC.max_position_size_hkd * scalar / price), RC.max_shares_hk)
         stop_loss = round(price * (1 - max(atr / price, 0.08)), 2)
         magna_score = magna_signal.magna_score
         # Base confidence: Q(45%) + MAGNA(25%) + Market(10%) + Sentiment(20%)
@@ -770,18 +791,6 @@ def run_hk_pipeline(tickers: List[str] = None,
         ],
         "decisions": decisions,
     }
-
-    # Helper: convert numpy types to Python native types
-    def np_safe(obj):
-        if isinstance(obj, (np.integer,)):
-            return int(obj)
-        if isinstance(obj, (np.floating,)):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, np.bool_):
-            return bool(obj)
-        return obj
 
     output_dir = Path(__file__).parent / "output"
     output_dir.mkdir(exist_ok=True)

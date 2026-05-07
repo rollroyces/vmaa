@@ -43,6 +43,7 @@ from models import (
 from config import P1C, P2C, RC
 from backtest.config import BacktestConfig, BTC, SlippageConfig
 from backtest.data import HistoricalDataLoader, HistoricalSnapshot
+from risk import compute_confidence
 
 logger = logging.getLogger("vmaa.backtest.engine")
 
@@ -310,29 +311,32 @@ class HistoricalSignalGenerator:
 
     def _get_cached_info(self, ticker: str, snapshot: HistoricalSnapshot) -> dict:
         """
-        Build an info dict from cached yfinance data + historical snapshot.
+        Build an info dict from historical snapshot data, with yfinance static fields overlay.
         
-        Strategy:
-          - Price-dependent fields use snapshot (historical) data
-          - Fundamental fields use cached (current) data as proxy
-          - Also includes balance_sheet / quarterly_financials via cached ticker
+        FIXED (2026-05): Previously started from current yfinance .info and only
+        overrode price fields — all fundamental ratios (ROA, ROE, EBITDA, D/E, etc.)
+        were from TODAY's data applied to historical dates (forward-looking bias).
+        
+        Now starts from HistoricalSnapshot (which already extracts balance_sheet/
+        cashflow fields at the snapshot date). Only uses yfinance cache for static
+        fields that don't have historical equivalents (shortName, exchange, etc.).
         """
-        cached = self._yf_cache.get(ticker, {})
+        # Start from historical snapshot — no forward-looking bias
+        info = self._snapshot_to_info(snapshot)
         
-        info = dict(cached)  # Start with current yfinance data
+        # Overlay yfinance-only static fields (don't change historically)
+        yf_info = self._yf_cache.get(ticker, {})
+        for field in ['shortName', 'longName', 'exchange', 'quoteType', 'currency',
+                       'market', 'financialCurrency', 'fullTimeEmployees']:
+            if field in yf_info and yf_info[field]:
+                if field not in info or not info.get(field):
+                    info[field] = yf_info[field]
         
-        # Override price-dependent fields with historical snapshot data
-        # Only override if snapshot provides meaningful (non-zero) values
-        if snapshot.close > 0:
-            info['regularMarketPrice'] = snapshot.close
-            info['currentPrice'] = snapshot.close
-            info['previousClose'] = snapshot.close
-        if snapshot.low_52w > 0:
-            info['fiftyTwoWeekLow'] = snapshot.low_52w
-        if snapshot.high_52w > 0:
-            info['fiftyTwoWeekHigh'] = snapshot.high_52w
-        if snapshot.market_cap and snapshot.market_cap > 0:
-            info['marketCap'] = snapshot.market_cap
+        # Use yfinance sector/industry if snapshot doesn't have them
+        if not info.get('sector') and yf_info.get('sector'):
+            info['sector'] = yf_info['sector']
+        if not info.get('industry') and yf_info.get('industry'):
+            info['industry'] = yf_info['industry']
         
         return info
 
@@ -373,11 +377,12 @@ class HistoricalSignalGenerator:
 
     def _build_prefetched(self, snapshot: HistoricalSnapshot) -> dict:
         """
-        Build a prefetched dict from cached yfinance data + historical snapshot.
+        Build a prefetched dict from historical snapshot data + yfinance static fields.
         
-        Uses cached CURRENT fundamentals (only source available) overlaid with
-        historical price-dependent fields from the snapshot for point-in-time
-        accuracy on price-based checks (PTL, gaps, volume).
+        FIXED (2026-05): Now builds info dict from HistoricalSnapshot (historical
+        fundamentals) instead of current yfinance .info. Only uses yfinance
+        cache for static fields without historical equivalents and for the
+        Ticker object (needed for quarterly financials access).
         """
         ticker = snapshot.ticker
         hist = self._daily_prices.get(ticker) if self._daily_prices else None
@@ -778,11 +783,28 @@ class BacktestEngine:
         if self.config.sector_momentum_enabled:
             self._top_sectors = self._compute_sector_momentum(tickers, date_str)
 
+        # Load pre-computed quality pool if re-screening fundamentals is disabled
+        quality_pool = None
+        if not self.config.re_screen_fundamentals:
+            pool_path = self.config.quality_pool_path
+            if pool_path and Path(pool_path).exists():
+                with open(pool_path) as f:
+                    quality_pool = set(line.strip().upper() for line in f if line.strip())
+                logger.info(f"  Loaded {len(quality_pool)} tickers from quality pool: {pool_path}")
+            else:
+                logger.warning(f"  Quality pool not found: {pool_path}")
+                logger.warning(f"  Falling back to re-screening fundamentals")
+                self.config.re_screen_fundamentals = True
+
         # Run Part 1 on all tickers
         candidates: List[VMAACandidate] = []
         for ticker in tickers:
             # Skip if already holding
             if ticker in self.portfolio.positions:
+                continue
+            
+            # Quality pool filter (pre-computed by Part1)
+            if quality_pool is not None and ticker not in quality_pool:
                 continue
 
             snapshot = self.loader.get_snapshot(ticker, date_str)
@@ -790,10 +812,7 @@ class BacktestEngine:
                 continue
 
             # Part 1
-            if self.config.re_screen_fundamentals:
-                p1 = self.signal_gen.screen_part1(snapshot)
-            else:
-                p1 = None  # Would load from quality pool
+            p1 = self.signal_gen.screen_part1(snapshot)
             if p1 is None:
                 continue
 
@@ -914,8 +933,22 @@ class BacktestEngine:
         entry_price = p1.current_price
         low_52w = p1.low_52w
 
+        # FIXED (2026-05): Use next day's open to avoid survivorship bias
+        # Using same-bar close gives forward-looking advantage
+        hist = self._daily_prices.get(ticker)
+        if hist is not None:
+            target = pd.Timestamp(date_str)
+            next_day_rows = hist[hist.index > target]
+            if not next_day_rows.empty:
+                entry_price = float(next_day_rows['Open'].iloc[0])
+            else:
+                # No next day data — apply slippage penalty
+                entry_price = entry_price * (1 + self.config.entry_slippage_pct)
+        else:
+            entry_price = entry_price * (1 + self.config.entry_slippage_pct)
+
         # Position sizing (Quarter-Kelly)
-        confidence = self._compute_confidence(candidate)
+        confidence = compute_confidence(candidate, self._market_regime)
         # Bear market: tighter stop for position sizing
         hard_stop_pct = self.config.bear_hard_stop_pct if self._is_bear_market else self.config.hard_stop_pct
         risk_per_share = entry_price * hard_stop_pct
@@ -1273,52 +1306,6 @@ class BacktestEngine:
         tr3 = (low - close.shift()).abs()
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
         return float(tr.tail(period).mean())
-
-    def _compute_confidence(self, candidate: VMAACandidate) -> float:
-        """Compute trade confidence score with sentiment integration."""
-        p1 = candidate.part1
-        p2 = candidate.part2
-        
-        # Part 1 quality (35% weight — was 40%)
-        confidence = p1.quality_score * 0.35
-        
-        # Part 2 MAGNA (25% weight — was 35%)
-        confidence += (p2.magna_score / 10) * 0.25
-        
-        # Part 3 Sentiment (15% weight — NEW)
-        sentiment = candidate.sentiment
-        if sentiment is not None:
-            # Base sentiment contribution
-            conf_sent = (sentiment.composite_score + 1.0) / 2.0  # Map -1..1 → 0..1
-            confidence += conf_sent * 0.15
-            
-            # Contrarian boost: extreme negative sentiment + strong fundamentals
-            if "CONTRARIAN_BUY" in sentiment.signals and p1.quality_score >= 0.50:
-                confidence += 0.08
-            
-            # Crowded trade penalty
-            if "CROWDED_TRADE" in sentiment.signals:
-                confidence -= 0.08
-            
-            # High analyst upside
-            if "HIGH_ANALYST_UPSIDE" in sentiment.signals:
-                confidence += 0.04
-        else:
-            # No sentiment — redistribute weight to fundamentals
-            confidence += 0.10  # Flat contribution
-        
-        # Market & technical (remaining 25%)
-        confidence += 0.10  # Base market contribution
-        if p1.ptl_ratio < 1.05:
-            confidence += 0.05
-        if p2.entry_ready:
-            confidence += 0.05
-        if p2.short_interest_score >= 2:
-            confidence += 0.03
-        if p2.g_gap_up:
-            confidence += 0.02
-        
-        return round(min(confidence, 1.0), 3)
 
     def _compute_monthly_returns(self) -> Dict[str, float]:
         """Compute monthly return series from equity curve."""

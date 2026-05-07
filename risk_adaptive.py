@@ -51,7 +51,7 @@ def compute_stops_adaptive(
 
     Returns: (stop_price, stop_type)
     """
-    atr = _compute_atr(hist, 14)
+    atr = compute_atr(hist, 14)
     atr_pct = atr / entry_price if entry_price > 0 else 0.03
 
     # ── 1. Dynamic ATR multiplier ──
@@ -71,10 +71,10 @@ def compute_stops_adaptive(
 
     # Proximity to 52w low: near bottom → need room for bounce
     ptl = entry_price / low_52w if low_52w > 0 else 1.0
-    if ptl < 1.10:
+    if ptl < 1.05:
+        base_mult += 1.0  # Very close to 52w-low — max breathing room
+    elif ptl < 1.10:
         base_mult += 0.5
-    elif ptl < 1.05:
-        base_mult += 1.0  # Very near 52w low, give max room
 
     # Market regime: high volatility = wider stops
     if market is not None:
@@ -116,11 +116,16 @@ def compute_stops_adaptive(
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Helper: ATR
+# Shared Utility: ATR
 # ═══════════════════════════════════════════════════════════════════
 
-def _compute_atr(hist: pd.DataFrame, period: int = 14) -> float:
-    """Average True Range — measure of price volatility."""
+
+def compute_atr(hist: pd.DataFrame, period: int = 14) -> float:
+    """Average True Range — measure of price volatility.
+    
+    Shared utility used by risk.py and risk_adaptive.py.
+    Import: from risk_adaptive import compute_atr
+    """
     if len(hist) < period + 1:
         return 0.0
     high = hist['High']
