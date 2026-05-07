@@ -24,8 +24,9 @@ logger = logging.getLogger("vmaa.data.sec")
 
 # ── SEC API Base ──
 _SEC_BASE = "https://data.sec.gov/api/xbrl"
+_contact = os.environ.get("SEC_USER_AGENT_CONTACT", "research@vmaa.local")
 _SEC_HEADERS = {
-    "User-Agent": "VMAA Research (rollroyces@gmail.com)",
+    "User-Agent": f"VMAA Research ({_contact})",
     "Accept-Encoding": "gzip, deflate",
 }
 

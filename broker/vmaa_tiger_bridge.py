@@ -72,6 +72,7 @@ class VMAATigerBridge:
 
     def execute(self, prices_path: str) -> Dict[str, Any]:
         """Execute all trade signals from VMAA price engine output."""
+        self.daily_count = 0
         trades = load_prices(prices_path)
         logger.info(f"Loaded {len(trades)} trade signals from {prices_path}")
 

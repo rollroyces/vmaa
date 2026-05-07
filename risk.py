@@ -140,51 +140,6 @@ def compute_position_size(
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Stop Loss Computation
-# ═══════════════════════════════════════════════════════════════════
-
-def compute_stops(
-    entry_price: float,
-    low_52w: float,
-    hist: pd.DataFrame,
-    market: Optional[object] = None,
-) -> Tuple[float, str]:
-    """
-    Compute optimal stop loss using 3 methods, pick the median one.
-
-    FIXED (2026-05): Previously picked the tightest (closest to entry)
-    stop, which caused 63% hard-stop loss rate in backtests. Tight stops
-    get triggered by normal volatility before mean-reversion can play out.
-    Now picks the median stop — balances protection with breathing room.
-
-    Returns: (stop_price, stop_type)
-    """
-    # 1. ATR-based stop (2.5x multiplier from config)
-    atr = compute_atr(hist, 14)
-    atr_stop = round(entry_price - (atr * RC.atr_stop_multiplier), 2) if atr > 0 else 0
-
-    # 2. Hard stop (15% below entry)
-    hard_stop = round(entry_price * (1 - RC.hard_stop_pct), 2)
-
-    # 3. Structural stop (below 52w low)
-    structural_stop = round(low_52w * 0.98, 2)
-
-    candidates = [(atr_stop, "ATR"), (hard_stop, "Hard"), (structural_stop, "Structural")]
-    candidates = [(s, n) for s, n in candidates if s > 0 and s < entry_price]
-
-    if not candidates:
-        return round(entry_price * 0.95, 2), "Fallback"
-
-    # Pick the MEDIAN stop (not the tightest):
-    # Tightest stop = lowest entry-to-stop distance = highest stop price
-    # Widest stop = highest entry-to-stop distance = lowest stop price
-    # Median balances protection vs breathing room — allows mean-reversion time
-    candidates.sort(key=lambda x: x[0])  # ascending by price
-    median_idx = len(candidates) // 2
-    return candidates[median_idx]
-
-
-# ═══════════════════════════════════════════════════════════════════
 # Take Profit Levels
 # ═══════════════════════════════════════════════════════════════════
 

@@ -43,7 +43,7 @@ UNIVERSE = [
     # Healthcare / MedTech
     "TMDX", "INMD", "NVCR", "GH", "PODD", "EXAS", "DXCM",
     "ALGN", "ICUI", "GKOS", "LMAT", "OFIX", "SIBN", "CVRX",
-    "NVRO", "ATRC", "GKOS", "BLFS", "VERA", "CYTK",
+    "NVRO", "ATRC", "BLFS", "VERA", "CYTK",
 
     # Tech / SaaS
     "FIVN", "DOCU", "BILL", "OLED", "ZS", "NET", "DDOG",

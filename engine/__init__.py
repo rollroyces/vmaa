@@ -298,8 +298,7 @@ class VMAAEngine:
                     for pool_name in ["core", "tactical"]:
                         status = pool_status.get(pool_name)
                         if status and status.stocks:
-                            # Can't access individual entries easily from PoolStatus
-                            pass
+                            pass  # Individual position extraction not yet implemented
 
                 if not positions:
                     # Empty portfolio — just show risk framework status

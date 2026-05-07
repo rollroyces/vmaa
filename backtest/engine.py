@@ -63,6 +63,7 @@ class Position:
     stop_loss: float
     take_profits: List[Dict[str, Any]]
     trailing_stop_pct: float
+    trailing_activate_pct: float = 0.18  # configurable: % gain before trail activates
     trailing_activated: bool = False
     trailing_high: float = 0.0
     time_stop_days: int = 60
@@ -85,7 +86,7 @@ class Position:
 
         # Trailing stop logic
         if not self.trailing_activated:
-            if self.unrealized_pnl_pct >= 10.0:  # Activate after 10% gain
+            if self.unrealized_pnl_pct >= self.trailing_activate_pct * 100:
                 self.trailing_activated = True
                 self.trailing_high = price
         else:
@@ -657,6 +658,7 @@ class BacktestEngine:
             # Update existing positions
             self.portfolio.update_prices(prices_today)
             self._check_exits(date_str, prices_today)
+            self.portfolio._recalc_equity()  # B2 fix: recalc after exits update cash
 
             # Rebalance — use >= to handle holidays where date ≠ trading day
             while (rebalance_idx < len(rebalance_dates) and
@@ -964,12 +966,11 @@ class BacktestEngine:
 
         # Position sizing (Quarter-Kelly)
         confidence = compute_confidence(candidate, self._market_regime)
-        # Bear market: tighter stop for position sizing
-        hard_stop_pct = self.config.bear_hard_stop_pct if self._is_bear_market else self.config.hard_stop_pct
-        risk_per_share = entry_price * hard_stop_pct
-        # Bear market: use wider stop distance for more accurate risk sizing
+        # Risk per share: normal 25%, bear 37.5% (wider breathing room for volatility)
+        stop_pct = self.config.hard_stop_pct  # 25%
         if self._is_bear_market:
-            risk_per_share = risk_per_share * 1.5  # Match widened stop
+            stop_pct *= 1.5  # 37.5% — wider for bear volatility
+        risk_per_share = entry_price * stop_pct
         # Base win probability 50% modulated by confidence (0.45 → 0.55 range)
         win_prob = 0.45 + confidence * 0.10
         payout = 2.0
@@ -1066,6 +1067,7 @@ class BacktestEngine:
             stop_loss=round(stop_loss, 2),
             take_profits=tps,
             trailing_stop_pct=self.config.trailing_stop_pct,
+            trailing_activate_pct=self.config.trailing_activate_after,
             trailing_high=entry_price,
             time_stop_days=self.config.time_stop_days,
             entry_method="backtest",
@@ -1110,7 +1112,10 @@ class BacktestEngine:
                 exited.append(ticker)
 
         for t in exited:
-            self.portfolio.positions.pop(t, None)
+            # B3 fix: guard against double-pop (position may already be removed
+            # by partial TP in _close_position)
+            if t in self.portfolio.positions:
+                self.portfolio.positions.pop(t, None)
 
     def _check_time_stops(self, date_str: str,
                           prices_today: Dict[str, float]) -> None:

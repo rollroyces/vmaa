@@ -656,7 +656,8 @@ def _run_magna_screen(
         import yfinance as yf
         import numpy as np
 
-        for ticker in tickers:
+        ticker_list = [getattr(p, 'ticker', p) if not isinstance(p, str) else p for p in pool]
+        for ticker in ticker_list:
             try:
                 t = yf.Ticker(ticker)
                 hist = t.history(period="6mo")
@@ -1105,7 +1106,7 @@ def _run_risk_assessment(
     risk_data["enabled"] = True
 
     try:
-        from engine.risk.engine import Portfolio, Position, quick_assess
+        from engine.risk.engine import quick_assess
 
         tickers = [c["ticker"] for c in candidates]
         prices = [c.get("price", 0) for c in candidates]
