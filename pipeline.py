@@ -305,7 +305,11 @@ def run_risk_and_execute(
 
         # Correlation check
         if existing_tickers:
-            corr = check_correlation(ticker, existing_tickers)
+            try:
+                corr = check_correlation(ticker, existing_tickers)
+            except Exception as e:
+                logger.warning(f"  Correlation check failed for {ticker}: {e}, skipping check")
+                corr = 0.0
             if corr > RiskCfg.max_correlation:
                 skipped.append((ticker, f"Corr {corr:.2f}"))
                 continue

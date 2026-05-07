@@ -295,17 +295,47 @@ def _apply_sentiment_to_confidence(
 # ═══════════════════════════════════════════════════════════════════
 
 def check_correlation(new_ticker: str, existing_tickers: List[str]) -> float:
-    """Max correlation between new ticker and existing positions."""
+    """Max correlation between new ticker and existing positions.
+    
+    Handles delisted/invalid tickers gracefully: if yf.download fails
+    (e.g. one ticker is delisted), falls back to individual yf.Ticker()
+    fetches, skipping failed ones.
+    """
     if not existing_tickers:
         return 0.0
+    all_tickers = [new_ticker] + existing_tickers
+
+    # Primary: batch download (fast but fragile to a single bad ticker)
     try:
-        all_tickers = [new_ticker] + existing_tickers
         data = yf.download(all_tickers, period="3mo", progress=False)['Close']
         returns = data.pct_change().dropna()
         if returns.shape[1] >= 2:
             corr_matrix = returns.corr()
-            new_corr = corr_matrix[new_ticker].drop(new_ticker)
-            return float(new_corr.max())
+            if new_ticker in corr_matrix.columns:
+                new_corr = corr_matrix[new_ticker].drop(new_ticker, errors='ignore')
+                return float(new_corr.max())
+    except Exception:
+        pass
+
+    # Fallback: individual ticker fetch, skip failures (delisted/invalid)
+    try:
+        data = pd.DataFrame()
+        for t in all_tickers:
+            try:
+                tkr = yf.Ticker(t)
+                hist = tkr.history(period="3mo")
+                if not hist.empty and 'Close' in hist.columns and len(hist) >= 20:
+                    data[t] = hist['Close']
+            except Exception:
+                pass  # Skip delisted/invalid tickers
+        if data.shape[1] >= 2:
+            returns = data.pct_change().dropna()
+            if returns.shape[1] >= 2:
+                corr_matrix = returns.corr()
+                if new_ticker in corr_matrix.columns:
+                    new_corr = corr_matrix[new_ticker].drop(new_ticker, errors='ignore')
+                    if len(new_corr) > 0:
+                        return float(new_corr.max())
     except Exception:
         pass
     return 0.0

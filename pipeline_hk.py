@@ -155,6 +155,14 @@ def screen_hk_fundamentals(ticker: str) -> Optional[Dict]:
 
         # ── Price & Market Cap ──
         current_price = float(info.get('currentPrice') or info.get('regularMarketPrice') or 0)
+        if current_price <= 0:
+            try:
+                from data.hybrid import get_price as hybrid_get_price
+                current_price, _, source, _ = hybrid_get_price(ticker)
+                if current_price > 0:
+                    logger.debug(f"  {ticker}: HK hybrid price (source={source})")
+            except Exception:
+                pass
         market_cap = float(info.get('marketCap') or 0)
         low_52w = float(info.get('fiftyTwoWeekLow') or 0)
         high_52w = float(info.get('fiftyTwoWeekHigh') or 0)
@@ -732,12 +740,22 @@ def run_hk_pipeline(tickers: List[str] = None,
     # Get prices
     price_cache = {}
     for q, _ in signals[:20]:
+        ticker = q["ticker"]
         try:
-            hist = yf.Ticker(q["ticker"]).history(period="5d")
+            hist = yf.Ticker(ticker).history(period="5d")
             if len(hist) > 0:
-                price_cache[q["ticker"]] = float(hist['Close'].iloc[-1])
+                price_cache[ticker] = float(hist['Close'].iloc[-1])
         except Exception:
             pass
+        if ticker not in price_cache:
+            try:
+                from data.hybrid import get_price as hybrid_get_price
+                price, _, source, _ = hybrid_get_price(ticker)
+                if price > 0:
+                    price_cache[ticker] = price
+                    logger.debug(f"  {ticker}: HK hybrid price cache (source={source})")
+            except Exception:
+                pass
 
     for q, s in signals[:15]:
         price = price_cache.get(q["ticker"], q.get("current_price", 0))

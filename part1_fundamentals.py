@@ -58,7 +58,7 @@ def screen_fundamentals(ticker: str, sector_medians: dict = None,
             info = t.info
             hist = t.history(period="1y")
 
-        if not _basic_checks(info, hist):
+        if not _basic_checks(info, hist, ticker):
             return None
 
         return _evaluate_part1(ticker, info, hist, t, sector_medians)
@@ -107,12 +107,12 @@ def batch_screen(tickers: List[str]) -> List[Part1Result]:
 # Basic Pre-checks
 # ═══════════════════════════════════════════════════════════════════
 
-def _basic_checks(info: dict, hist: pd.DataFrame) -> bool:
+def _basic_checks(info: dict, hist: pd.DataFrame, ticker: str = None) -> bool:
     """Fast-reject stocks that don't meet basic data requirements."""
     if hist is None or len(hist) < 20:
         return False
 
-    price = get_price_from_info(info)
+    price = get_price_from_info(info, ticker)
     if price <= 0 or price < P1C.min_price:
         return False
 
@@ -430,7 +430,7 @@ def _evaluate_part1(ticker: str, info: dict, hist: pd.DataFrame,
     Uses sector_medians for relative comparison when provided (C2).
     Returns Part1Result if quality_score >= min_quality_score, else None.
     """
-    price = get_price_from_info(info)
+    price = get_price_from_info(info, ticker)
     passed_criteria: List[str] = []
     failed_criteria: List[str] = []
     warnings: List[str] = []
@@ -564,17 +564,28 @@ def _evaluate_part1(ticker: str, info: dict, hist: pd.DataFrame,
 # Helpers
 # ═══════════════════════════════════════════════════════════════════
 
-def get_price_from_info(info: dict) -> float:
+def get_price_from_info(info: dict, ticker: str = None) -> float:
     """Extract current price from yfinance info dict.
 
     Works across multiple yfinance field names. Use this canonical
     implementation instead of inlining price extraction elsewhere.
+    If ticker is provided and yfinance returns 0, falls back to
+    data.hybrid.get_price() (Tiger delayed → yfinance history).
     """
-    return float(
+    price = float(
         info.get('regularMarketPrice') or
         info.get('currentPrice') or
         info.get('previousClose', 0)
     )
+    if price <= 0 and ticker:
+        try:
+            from data.hybrid import get_price as hybrid_get_price
+            price, _, source, _ = hybrid_get_price(ticker)
+            if price > 0:
+                logger.debug(f"  {ticker}: Using Tiger/yfinance hybrid price (source={source})")
+        except Exception:
+            pass
+    return price
 
 
 def _fmt_cap(cap: float) -> str:
@@ -608,7 +619,7 @@ def compute_sector_medians(tickers: List[str],
         try:
             info = yf.Ticker(ticker).info
             sector = info.get('sector', 'Other')
-            price = get_price_from_info(info)
+            price = get_price_from_info(info, ticker)
             bv = info.get('bookValue', 0)
             roa = info.get('returnOnAssets')
             ebitda = info.get('ebitda', 0)

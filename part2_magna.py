@@ -408,7 +408,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
     Run all MAGNA 53/10 checks and compute composite score.
     Entry is triggered when G fires OR M+A both fire.
     """
-    price = get_price_from_info(info)
+    price = get_price_from_info(info, ticker)
 
     magna_score = 0.0
     trigger_signals: List[str] = []
