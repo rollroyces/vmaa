@@ -543,6 +543,8 @@ class BacktestEngine:
         
         # Improvement: track hard-stopped tickers for cooldown (6 months)
         self._hard_stopped_tickers: Dict[str, str] = {}
+        # Track days-since-last-Part2-signal to prevent infinite re-queuing
+        self._part2_signal_age: Dict[str, int] = {}
         self._hs_cooldown_days: int = 180
         self._sector_hs_streak: Dict[str, int] = {}
         self._top_sectors: set = set()
@@ -816,13 +818,26 @@ class BacktestEngine:
             if p1 is None:
                 continue
 
-            # Part 2
-            if self.config.re_screen_magna:
+            # ── Signal Staleness Check ──
+            # Skip Part 2 for tickers that keep passing Part 1 but
+            # failing Part 2 — prevents infinite re-queuing of
+            # stale candidates in the quality pool.
+            stale_age = self._part2_signal_age.get(ticker, 0)
+            if stale_age > self.config.signal_stale_days:
+                logger.debug(f"  {ticker}: Signal stale ({stale_age}d since last P2 signal), skipping Part 2")
+                p2 = None
+            elif self.config.re_screen_magna:
                 p2 = self.signal_gen.screen_part2(snapshot, p1)
             else:
                 p2 = None
+
             if p2 is None:
+                # P1 passed but P2 failed — increment staleness counter
+                self._part2_signal_age[ticker] = stale_age + 30  # ~30d per monthly rebalance
                 continue
+
+            # P2 signal generated — reset staleness counter
+            self._part2_signal_age[ticker] = 0
 
             # Composite rank
             composite = p1.quality_score * 0.50 + (p2.magna_score / 10) * 0.35
@@ -1070,6 +1085,11 @@ class BacktestEngine:
         exited = []
         for ticker, pos in list(self.portfolio.positions.items()):
             price = prices_today.get(ticker, pos.current_price)
+            # NOTE: Daily-bar limitation — on non-trading days (weekends, holidays),
+            # bar_high/bar_low fall back to closing price. Stop triggers that occur
+            # in the gap between Friday close and Monday open are NOT captured.
+            # This is a standard limitation of EOD backtesting; intraday or tick
+            # data would be required to eliminate it.
             bar_high = price
             bar_low = price
             bar_open = price

@@ -134,6 +134,12 @@ class BacktestConfig:
     # Cache directory for downloaded data
     cache_dir: str = "backtest/cache"
 
+    # ── Signal Staleness ──
+    # Days since last Part 2 signal before a ticker is considered stale.
+    # Stale tickers (passing Part 1 but failing Part 2 for >90 days) are
+    # skipped to avoid wasted compute on tickers that never generate entries.
+    signal_stale_days: int = 90
+
     # ── Bear Market Defense ──
     bear_market_ma_period: int = 200          # MA period for bear detection
     bear_market_enabled: bool = True          # Enable bear-market risk reduction
@@ -162,6 +168,7 @@ class BacktestConfig:
             'rebalance_frequency': self.rebalance_frequency,
             'benchmark_ticker': self.benchmark_ticker,
             'max_positions': self.max_positions,
+            'signal_stale_days': self.signal_stale_days,
             'tickers': self.tickers,
         }
 
