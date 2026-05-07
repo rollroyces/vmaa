@@ -250,12 +250,16 @@ def _check_gap_up(hist: pd.DataFrame, info: dict) -> Tuple[bool, bool, float, in
     if gap_detected:
         gap_pct = best_gap
         gap_day_volume = best_gap_day_volume
-        # Check if best gap day volume ≥ 1.5x 20-day average
+        # Check if best gap day volume ≥ multiplier × 20-day average
         vol_window = recent['Volume'].iloc[max(0, best_gap_idx - 20):best_gap_idx]
-        if len(vol_window) >= 5:
+        if len(vol_window) >= 10:
             avg_vol_20d = float(vol_window.mean())
             if avg_vol_20d > 0:
                 volume_confirmed = gap_day_volume >= avg_vol_20d * P2C.gap_volume_multiplier
+        else:
+            # Not enough volume history — flag but don't block gap signal
+            logger.warning(f"  Gap up detected but only {len(vol_window)} bars of volume "
+                          f"history (need ≥10) — volume confirmation skipped")
 
     return gap_detected, volume_confirmed, round(gap_pct, 4), gap_day_volume
 
@@ -538,7 +542,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
         m_earnings_accel=m_pass,
         a_sales_accel=a_pass,
         g_gap_up=g_pass,
-        g_premarket_vol_ok=g_vol_ok,
+        g_volume_confirmed=g_vol_ok,
         n_neglect_base=n_pass,
         short_interest_high=(si_score >= 2),
         short_interest_score=si_score,
@@ -553,7 +557,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
         revenue_growth_prev_qoq=rev_prev,
         revenue_acceleration=rev_accel,
         gap_pct=gap_pct,
-        premarket_volume=gap_vol,
+        gap_day_volume=gap_vol,
         short_ratio=short_ratio,
         short_pct_float=short_pct,
         base_duration_months=base_duration,

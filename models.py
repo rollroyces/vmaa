@@ -77,7 +77,7 @@ class Part2Signal:
     m_earnings_accel: bool = False        # Massive Earnings Acceleration
     a_sales_accel: bool = False           # Acceleration of Sales
     g_gap_up: bool = False               # Gap Up >4%
-    g_premarket_vol_ok: bool = False     # Pre-market volume >100K
+    g_volume_confirmed: bool = False     # Gap day volume confirmed vs 20-day avg
     n_neglect_base: bool = False         # Neglect / Base pattern detected
     short_interest_high: bool = False    # Short Interest elevated (score 0-2)
     short_interest_score: int = 0        # 0, 1, or 2 points
@@ -94,7 +94,7 @@ class Part2Signal:
     revenue_growth_prev_qoq: float = 0.0
     revenue_acceleration: float = 0.0
     gap_pct: float = 0.0                 # Gap-up percentage
-    premarket_volume: int = 0            # Pre-market volume
+    gap_day_volume: int = 0              # Total daily volume on gap day
     short_ratio: float = 0.0             # Short interest ratio
     short_pct_float: float = 0.0         # % of float short
     base_duration_months: float = 0.0    # How long in base (months)

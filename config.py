@@ -11,6 +11,7 @@ Also includes risk management and pipeline operational params.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import List
 
 
@@ -35,7 +36,7 @@ class Part1Config:
     target_bm_ratio: float = 0.60             # Target B/M (was 0.8)
 
     # ── 3. Quality: ROA ──
-    min_roa: float = 0.0                      # Minimum ROA (must be profitable)
+    min_roa: float = 0.005                     # Minimum ROA 0.5% (was 0.0 — too permissive)
     target_roa: float = 0.05                  # Target ROA (5%+)
 
     # ── 4. Quality: EBITDA Margin ──
@@ -86,6 +87,13 @@ class Part1Config:
     # ── Pass threshold ──
     min_quality_score: float = 0.40           # Minimum composite quality to pass
 
+    def __post_init__(self):
+        w_sum = (self.weight_bm + self.weight_roa + self.weight_ebitda +
+                 self.weight_fcf_yield + self.weight_fcf_conversion +
+                 self.weight_ptl + self.weight_asset_efficiency)
+        if abs(w_sum - 1.0) > 0.001:
+            raise ValueError(f"Part1 weights sum to {w_sum}, expected 1.0")
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Part 2: MAGNA 53/10 Thresholds
@@ -105,8 +113,7 @@ class Part2Config:
 
     # ── G: Gap Up ──
     gap_min_pct: float = 0.04                 # Gap ≥ 4%
-    gap_premarket_vol_min: int = 100_000      # Pre-market volume ≥ 100K (DEPRECATED: yfinance never returns this)
-    gap_volume_multiplier: float = 1.5        # Gap day volume must be ≥ 1.5x 20-day avg (replaces broken preMarketVolume)
+    gap_volume_multiplier: float = 1.5        # Gap day volume must be ≥ 1.5x 20-day avg
     gap_lookback_days: int = 20               # Look back 20 trading days
 
     # ── N: Neglect / Base Pattern ──
@@ -147,6 +154,9 @@ class Part2Config:
     # ── Entry Triggers ──
     # Entry is triggered when G (Gap) OR both M+A fire simultaneously
     require_gap_or_ma: bool = True
+
+    def __post_init__(self):
+        object.__setattr__(self, 'magna_points', MappingProxyType(self.magna_points))
 
 
 # ═══════════════════════════════════════════════════════════════════

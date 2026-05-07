@@ -194,16 +194,30 @@ def _check_quality(info: dict, price: float, sector_medians: dict = None) -> Dic
         else:
             result['ebitda_pass'] = ebitda_margin >= P1C.min_ebitda_margin
 
-    # Partial quality score (always uses absolute targets for scoring consistency)
+    # Quality scoring: when sector medians are available AND used for
+    # pass/fail, normalise to sector-adjusted targets to avoid a stock
+    # passing the sector-relative check but scoring 0 on absolute targets.
     q_score = 0.0
     if result['bm_pass']:
-        bm_score = min(result['bm'] / P1C.target_bm_ratio, 1.0)
+        if sm and sm.get('bm'):
+            target = sm['bm'] * 1.5
+        else:
+            target = P1C.target_bm_ratio
+        bm_score = min(result['bm'] / target, 1.0) if target > 0 else 0
         q_score += bm_score * P1C.weight_bm
     if result['roa_pass']:
-        roa_score = min(result['roa'] / P1C.target_roa, 1.0) if P1C.target_roa > 0 else 0
+        if sm and sm.get('roa') is not None:
+            target = max(sm['roa'] * 1.5, 0.005)
+        else:
+            target = P1C.target_roa
+        roa_score = min(result['roa'] / target, 1.0) if target > 0 else 0
         q_score += roa_score * P1C.weight_roa
     if result['ebitda_pass']:
-        ebitda_score = min(result['ebitda_margin'] / P1C.target_ebitda_margin, 1.0)
+        if sm and sm.get('ebitda_margin') is not None:
+            target = sm['ebitda_margin'] * 1.5
+        else:
+            target = P1C.target_ebitda_margin
+        ebitda_score = min(result['ebitda_margin'] / target, 1.0) if target > 0 else 0
         q_score += ebitda_score * P1C.weight_ebitda
 
     result['score'] = round(q_score, 4)
@@ -304,15 +318,19 @@ def _check_asset_efficiency(t: yf.Ticker) -> Tuple[bool, float, float, float, st
 
         if total_assets is None or net_income is None:
             return False, 0.0, 0.0, 0.0, "n/a"
-        if len(total_assets) < 2 or len(net_income) < 2:
+
+        # Prefer YoY (iloc[0] vs iloc[4]=same quarter prior year) to avoid
+        # seasonal distortion.  Fall back to QoQ (iloc[0] vs iloc[1]) when
+        # fewer than 5 quarters are available.
+        use_yoy = len(total_assets) >= 5 and len(net_income) >= 5
+        if not use_yoy and (len(total_assets) < 2 or len(net_income) < 2):
             return False, 0.0, 0.0, 0.0, "n/a"
 
-        # YoY growth rates
-        # yfinance quarterly data: .iloc[0] = most recent quarter, .iloc[1] = prior quarter
+        # yfinance quarterly data: .iloc[0] = most recent quarter
         assets_latest = float(total_assets.iloc[0])
-        assets_prev = float(total_assets.iloc[1])
+        assets_prev = float(total_assets.iloc[4] if use_yoy else total_assets.iloc[1])
         ni_latest = float(net_income.iloc[0])
-        ni_prev = float(net_income.iloc[1])
+        ni_prev = float(net_income.iloc[4] if use_yoy else net_income.iloc[1])
 
         if assets_prev <= 0:
             return False, 0.0, 0.0, 0.0, "n/a"
@@ -374,7 +392,7 @@ def _check_earnings_authenticity(info: dict) -> Tuple[bool, float, float]:
     fcf = info.get('freeCashflow', 0)
     ni = info.get('netIncomeToCommon', 0) or info.get('netIncome', 0)
 
-    if not ni or abs(ni) < 1e-6:
+    if ni is None or abs(ni) < 1e-6:
         # Can't compute ratio, check if FCF is positive as fallback
         passed = fcf > 0
         return passed, 0.0, P1C.weight_fcf_conversion * 0.5 if passed else 0.0
@@ -581,6 +599,8 @@ def compute_sector_medians(tickers: List[str],
     Returns: {sector: {bm_median, roa_median, ebitda_median, fcf_yield_median}}
     """
     import random
+    if not tickers or sample_size <= 0:
+        return {}
     sample = random.sample(tickers, min(sample_size, len(tickers)))
 
     sector_data: Dict[str, List[Dict]] = {}
