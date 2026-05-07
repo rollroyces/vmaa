@@ -864,6 +864,9 @@ class BacktestEngine:
         # Bear market: tighter stop for position sizing
         hard_stop_pct = self.config.bear_hard_stop_pct if self._is_bear_market else self.config.hard_stop_pct
         risk_per_share = entry_price * hard_stop_pct
+        # Bear market: use wider stop distance for more accurate risk sizing
+        if self._is_bear_market:
+            risk_per_share = risk_per_share * 1.5  # Match widened stop
         # Base win probability 50% modulated by confidence (0.45 → 0.55 range)
         win_prob = 0.45 + confidence * 0.10
         payout = 2.0
@@ -923,6 +926,12 @@ class BacktestEngine:
         stop_loss, stop_type = compute_stops_adaptive(
             entry_price, low_52w, mini_hist, market=self._market_regime
         )
+
+        # Bear market: widen stop by 50% for volatility breathing room
+        if self._is_bear_market:
+            stop_distance = entry_price - stop_loss
+            stop_loss = max(0.01, entry_price - (stop_distance * 1.5))
+            stop_type += "_bear_wide"
 
         # Take profits
         tps = []
