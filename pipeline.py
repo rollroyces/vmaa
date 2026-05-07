@@ -391,6 +391,71 @@ def _sector_of(ticker: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Stage 3: Sentiment Analysis
+# ═══════════════════════════════════════════════════════════════════
+
+def run_sentiment(candidates: List[VMAACandidate]) -> List[VMAACandidate]:
+    """
+    Stage 3: Multi-source sentiment analysis on candidates.
+    Attaches SentimentResult to each VMAACandidate.
+    """
+    from part3_sentiment import batch_sentiment
+
+    if not candidates:
+        return candidates
+
+    logger.info("\n" + "=" * 60)
+    logger.info("STAGE 3: Sentiment Analysis")
+    logger.info("=" * 60)
+    logger.info(f"Analyzing sentiment for {len(candidates)} candidates")
+    logger.info("Sources: Analyst | News (VADER) | Social | Technical | Insider")
+
+    tickers = [c.ticker for c in candidates]
+    sentiment_results = batch_sentiment(tickers, delay=0.15)
+
+    for c in candidates:
+        c.sentiment = sentiment_results.get(c.ticker)
+
+    # Print summary
+    if candidates:
+        logger.info(f"\n😐 Sentiment Summary:")
+        for c in candidates[:15]:
+            s = c.sentiment
+            if s:
+                sig_str = f" [{','.join(s.signals[:2])}]" if s.signals else ""
+                logger.info(
+                    f"  {s.sentiment_label:20s} {c.ticker:6s} "
+                    f"comp={s.composite_score:+.2f} "
+                    f"A={s.analyst_score:+.2f} "
+                    f"N={s.news_score:+.2f} "
+                    f"S={s.social_score:+.2f} "
+                    f"T={s.technical_score:+.2f}"
+                    f"{sig_str}"
+                )
+
+        # Count sentiment labels
+        labels = {}
+        for c in candidates:
+            if c.sentiment:
+                lbl = c.sentiment.sentiment_label
+                labels[lbl] = labels.get(lbl, 0) + 1
+        label_summary = ", ".join(f"{k}:{v}" for k, v in sorted(labels.items()))
+        logger.info(f"  Distribution: {label_summary}")
+
+        # Contrarian opportunities
+        contrarians = [c for c in candidates
+                       if c.sentiment and "CONTRARIAN_BUY" in c.sentiment.signals]
+        if contrarians:
+            logger.info(f"\n  🔥 Contrarian Opportunities ({len(contrarians)}):")
+            for c in contrarians[:5]:
+                logger.info(f"    {c.ticker:6s} Q={c.part1.quality_score:.0%} "
+                            f"MAGNA={c.part2.magna_score}/10 "
+                            f"Sent={c.sentiment.composite_score:+.2f}")
+
+    return candidates
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Full Pipeline
 # ═══════════════════════════════════════════════════════════════════
 
@@ -441,7 +506,10 @@ def run_full_pipeline(
     quality_tickers = [p.ticker for p in quality_pool]
     _, signals, candidates = run_stage2(quality_tickers)
 
-    # ── Stage 3: Risk + Execute ──
+    # ── Stage 3: Sentiment Analysis ──
+    candidates = run_sentiment(candidates)
+
+    # ── Stage 4: Risk + Execute ──
     from broker.tiger_broker import TigerBroker
     broker = TigerBroker()
     existing_positions = broker.get_positions()

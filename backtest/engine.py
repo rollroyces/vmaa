@@ -479,6 +479,31 @@ class HistoricalSignalGenerator:
             position_scalar=scalar,
         )
 
+    def screen_sentiment(self, ticker: str, snapshot: 'HistoricalSnapshot') -> Optional[Any]:
+        """
+        Run Part 3 sentiment analysis using historical-mode data.
+        Uses: price history (technical) + yfinance info (analyst/insider proxy).
+        Returns SentimentResult or None.
+        """
+        try:
+            from part3_sentiment import analyze_sentiment_historical
+            
+            # Get price history up to snapshot date
+            hist = self._daily_prices.get(ticker) if self._daily_prices else None
+            if hist is not None:
+                target = pd.Timestamp(snapshot.date)
+                hist = hist[hist.index <= target].copy()
+            
+            # Get yfinance info (current proxy for fundamentals)
+            yf_info = self._yf_cache.get(ticker, {})
+            
+            return analyze_sentiment_historical(
+                ticker, price_history=hist, yf_info=yf_info
+            )
+        except Exception as e:
+            logger.debug(f"  {ticker}: Sentiment via historical mode failed — {e}")
+            return None
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Core Backtesting Engine
@@ -793,8 +818,38 @@ class BacktestEngine:
                 entry_triggered=p2.entry_ready,
             ))
 
+        # ── Part 3: Sentiment Analysis ──
+        # Run historical-mode sentiment on all candidates that passed Part 1+2
+        # This allows sentiment to adjust confidence during trade execution
+        for candidate in candidates:
+            snapshot = self.loader.get_snapshot(candidate.ticker, date_str)
+            if snapshot:
+                sentiment = self.signal_gen.screen_sentiment(candidate.ticker, snapshot)
+                candidate.sentiment = sentiment
+
         # Sort: entry-triggered first, then by composite rank
         candidates.sort(key=lambda c: (c.entry_triggered, c.composite_rank), reverse=True)
+
+        # ── Sentiment-Based Entry Filter ──
+        filtered_candidates = []
+        for c in candidates:
+            keep = True
+            if c.sentiment is not None:
+                sentiment = c.sentiment
+                label = sentiment.sentiment_label
+                composite_s = sentiment.composite_score
+                # REJECT: Strongly bearish (composite < -0.3) AND weak fundamentals
+                if composite_s < -0.30 and c.part1.quality_score < 0.45:
+                    keep = False
+                # REJECT: Crowded trade — everyone is already in
+                if "CROWDED_TRADE" in sentiment.signals:
+                    keep = False
+                # REJECT: Strongly bearish with no contrarian signal
+                if composite_s < -0.35 and "CONTRARIAN_BUY" not in sentiment.signals:
+                    keep = False
+            if keep:
+                filtered_candidates.append(c)
+        candidates = filtered_candidates
 
         # Execute entries
         max_pos = self.config.bear_max_positions if self._is_bear_market else self.config.max_positions
@@ -886,6 +941,17 @@ class BacktestEngine:
         else:
             kelly_frac = self.config.kelly_fraction
         risk_capital = portfolio_value * kelly * kelly_frac * scalar
+        
+        # ── Sentiment Sizing Adjustment ──
+        if candidate.sentiment is not None:
+            sent = candidate.sentiment
+            # Contrarian buy: increase sizing (buy fear)
+            if "CONTRARIAN_BUY" in sent.signals:
+                risk_capital *= 1.30
+            # High analyst upside: moderate boost
+            if "HIGH_ANALYST_UPSIDE" in sent.signals:
+                risk_capital *= 1.15
+        
         raw_qty = int(risk_capital / risk_per_share) if risk_per_share > 0 else 0
 
         # Allocation-based limit
@@ -1209,11 +1275,39 @@ class BacktestEngine:
         return float(tr.tail(period).mean())
 
     def _compute_confidence(self, candidate: VMAACandidate) -> float:
-        """Compute trade confidence score."""
+        """Compute trade confidence score with sentiment integration."""
         p1 = candidate.part1
         p2 = candidate.part2
-        confidence = p1.quality_score * 0.40
-        confidence += (p2.magna_score / 10) * 0.35
+        
+        # Part 1 quality (35% weight — was 40%)
+        confidence = p1.quality_score * 0.35
+        
+        # Part 2 MAGNA (25% weight — was 35%)
+        confidence += (p2.magna_score / 10) * 0.25
+        
+        # Part 3 Sentiment (15% weight — NEW)
+        sentiment = candidate.sentiment
+        if sentiment is not None:
+            # Base sentiment contribution
+            conf_sent = (sentiment.composite_score + 1.0) / 2.0  # Map -1..1 → 0..1
+            confidence += conf_sent * 0.15
+            
+            # Contrarian boost: extreme negative sentiment + strong fundamentals
+            if "CONTRARIAN_BUY" in sentiment.signals and p1.quality_score >= 0.50:
+                confidence += 0.08
+            
+            # Crowded trade penalty
+            if "CROWDED_TRADE" in sentiment.signals:
+                confidence -= 0.08
+            
+            # High analyst upside
+            if "HIGH_ANALYST_UPSIDE" in sentiment.signals:
+                confidence += 0.04
+        else:
+            # No sentiment — redistribute weight to fundamentals
+            confidence += 0.10  # Flat contribution
+        
+        # Market & technical (remaining 25%)
         confidence += 0.10  # Base market contribution
         if p1.ptl_ratio < 1.05:
             confidence += 0.05
@@ -1221,6 +1315,9 @@ class BacktestEngine:
             confidence += 0.05
         if p2.short_interest_score >= 2:
             confidence += 0.03
+        if p2.g_gap_up:
+            confidence += 0.02
+        
         return round(min(confidence, 1.0), 3)
 
     def _compute_monthly_returns(self) -> Dict[str, float]:

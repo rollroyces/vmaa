@@ -92,24 +92,26 @@ class BacktestConfig:
     quality_pool_path: str = ""
 
     # ── Position Sizing ──
-    # Override RiskConfig values for backtest
+    # WIDE_STOP optimized values
     max_positions: int = 5
     max_positions_per_sector: int = 2
-    max_position_pct: float = 0.25
-    kelly_fraction: float = 0.25              # Base Kelly fraction
+    max_position_pct: float = 0.18
+    kelly_fraction: float = 0.15              # Matches winning WIDE_STOP tuning
     kelly_fraction_bull: float = 0.40         # Aggressive in bull markets
     kelly_fraction_bear: float = 0.15         # Conservative in bear markets
     min_position_size: float = 500.0
 
     # ── Stop Loss / Take Profit ──
-    atr_stop_multiplier: float = 2.0
-    hard_stop_pct: float = 0.15
-    trailing_stop_pct: float = 0.10
-    trailing_activate_after: float = 0.12  # Activate trailing after 10% gain
-    time_stop_days: int = 180
-    # Take profit levels (pct above entry)
-    tp_levels: List[float] = field(default_factory=lambda: [0.12, 0.22, 0.35])
-    tp_sell_fractions: List[float] = field(default_factory=lambda: [0.30, 0.30, 0.40])
+    # WIDE_STOP strategy (backtest winner 2026-05-07)
+    atr_stop_multiplier: float = 3.0
+    hard_stop_pct: float = 0.25              # Wide stop — allows mean-reversion
+    trailing_stop_pct: float = 0.12
+    trailing_activate_after: float = 0.18    # Activate trailing after 18% gain
+    time_stop_days: int = 9999               # No time limit — let trades fully play out
+    # Take profit: full exit at TP1 (the #1 improvement — partial fills were destroying returns)
+    tp_levels: List[float] = field(default_factory=lambda: [0.15, 0.25, 0.40])
+    tp_sell_fractions: List[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
+    # TP1: sell 100% at +15% | TP2: 100% at +25% | TP3: 100% at +40%
 
     # ── Sector Rotation ──
     sector_momentum_enabled: bool = True

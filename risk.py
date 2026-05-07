@@ -190,17 +190,25 @@ def compute_take_profits(
     entry_price: float,
     market: MarketRegime,
 ) -> List[Dict[str, Any]]:
-    """Compute 3-tier take profit levels, volatility-adjusted."""
-    vol_adj = market.position_scalar
-
-    tp1 = round(entry_price * (1 + 0.12 * vol_adj), 2)
-    tp2 = round(entry_price * (1 + 0.22 * vol_adj), 2)
-    tp3 = round(entry_price * (1 + 0.35 * vol_adj), 2)
+    """
+    Compute take profit levels — WIDE_STOP strategy.
+    
+    Changed from 3-tier partial to single primary TP1 (100% exit).
+    Partial fills were the #1 cause of losses: selling 30% at +12%
+    locked tiny wins while remaining 70% bled to hard stop.
+    
+    TP1: +15% (100% sell) — primary exit
+    TP2: +25% — secondary (if not already exited)
+    TP3: +40% — tertiary
+    """
+    tp1 = round(entry_price * (1 + RC.tp1_level_pct), 2)
+    tp2 = round(entry_price * (1 + RC.tp2_level_pct), 2)
+    tp3 = round(entry_price * (1 + RC.tp3_level_pct), 2)
 
     return [
-        {"level": tp1, "sell_pct": 30, "label": "TP1"},
-        {"level": tp2, "sell_pct": 30, "label": "TP2"},
-        {"level": tp3, "sell_pct": 40, "label": "TP3"},
+        {"level": tp1, "sell_pct": 100, "label": "TP1"},   # Full exit
+        {"level": tp2, "sell_pct": 100, "label": "TP2"},   # Fallback
+        {"level": tp3, "sell_pct": 100, "label": "TP3"},   # Fallback
     ]
 
 
@@ -256,36 +264,73 @@ def compute_confidence(
     market: MarketRegime,
 ) -> float:
     """
-    Compute overall trade confidence from Part 1 quality + Part 2 signal + market.
+    Compute overall trade confidence from Part 1 quality + Part 2 signal +
+    Part 3 sentiment + market.
     Returns: 0.0–1.0 confidence score.
     """
     confidence = 0.0
     p1 = candidate.part1
     p2 = candidate.part2
+    sentiment = candidate.sentiment  # Part 3
 
-    # Part 1 quality contribution (40% weight)
-    confidence += p1.quality_score * 0.40
+    # Part 1 quality contribution (35% weight — was 40%)
+    confidence += p1.quality_score * 0.35
 
-    # Part 2 signal strength (35% weight)
-    confidence += (p2.magna_score / 10) * 0.35
+    # Part 2 signal strength (30% weight — was 35%)
+    confidence += (p2.magna_score / 10) * 0.30
 
-    # Market regime (15% weight)
+    # Part 3 sentiment (15% weight — NEW)
+    sentiment_notes = []
+    if sentiment is not None:
+        # Base sentiment contribution
+        # For value mean-reversion: contrarian sentiment is GOOD
+        base_confidence = confidence
+        confidence, sentiment_notes = _apply_sentiment_to_confidence(
+            sentiment, confidence
+        )
+        candidate._sentiment_notes = sentiment_notes
+    else:
+        # No sentiment data — redistribute to market/technical
+        pass
+
+    # Market regime (10% weight — was 15%, reduced for sentiment)
     if market.market_ok:
-        confidence += 0.15
+        confidence += 0.10
     elif market.vol_regime == "LOW":
-        confidence += 0.08
+        confidence += 0.05
 
-    # Technical edge (10% weight)
+    # Technical edge (10% weight — unchanged)
     if p1.ptl_ratio < 1.05:
         confidence += 0.05
     if p2.entry_ready:
         confidence += 0.05
     if p2.g_gap_up:
-        confidence += 0.02  # Small bonus for gap confirmation
+        confidence += 0.02
     if p2.short_interest_score >= 2:
-        confidence += 0.03  # Squeeze potential
+        confidence += 0.03
 
     return round(min(confidence, 1.0), 3)
+
+
+def _apply_sentiment_to_confidence(
+    sentiment,
+    base_confidence: float,
+) -> tuple:
+    """
+    Apply sentiment analysis to confidence scoring.
+    
+    Value mean-reversion logic:
+      CONTRARIAN_BUY (extreme negative sentiment) → boost confidence
+        (fear creates opportunity — buy when others are fearful)
+      CROWDED_TRADE (extreme positive sentiment) → reduce confidence
+        (euphoria means limited upside, everyone is already in)
+      NEWS_EXTREME_NEGATIVE → slight boost (overreaction opportunity)
+      NEWS_EXTREME_POSITIVE → slight cut (euphoria risk)
+      HIGH_ANALYST_UPSIDE → boost
+      SENTIMENT_DIVERGENCE → directional adjustment
+    """
+    from part3_sentiment import sentiment_confidence_adjustment
+    return sentiment_confidence_adjustment(sentiment, base_confidence)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -396,6 +441,14 @@ def generate_trade_decision(
     else:
         action = 'MONITOR'
 
+    # ── Sentiment risk flags ──
+    sentiment = candidate.sentiment
+    if sentiment is not None:
+        if "CONTRARIAN_BUY" in sentiment.signals:
+            risk_flags.append("Contrarian_entry")
+        if "CROWDED_TRADE" in sentiment.signals:
+            risk_flags.append("Crowded_trade")
+
     # ── Rationale ──
     parts = [
         f"{ticker}: {action} {quantity}sh @ ${entry_price:.2f}",
@@ -409,6 +462,10 @@ def generate_trade_decision(
         parts.append(f"⚡{'G' if p2.g_gap_up else 'MA'}")
     if p2.trigger_signals:
         parts.append(f"Sig={','.join(p2.trigger_signals)}")
+    if sentiment is not None:
+        parts.append(f"😐{sentiment.sentiment_label[:4]}")
+        if sentiment.signals:
+            parts.append(f"Sent={','.join(sentiment.signals[:2])}")
     if risk_flags:
         parts.append(f"⚠️ {';'.join(risk_flags)}")
     rationale = " | ".join(parts)

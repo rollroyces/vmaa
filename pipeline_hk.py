@@ -499,8 +499,9 @@ def compute_hk_trade_decision(
     magna_signal,  # HKMagnaSignal
     price: float,
     market: dict,
+    sentiment=None,  # SentimentResult from part3_sentiment
 ) -> dict:
-    """Generate HK trade decision."""
+    """Generate HK trade decision with sentiment integration."""
     scalar = market.get("position_scalar", 0.8)
     atr = price * 0.025
 
@@ -509,21 +510,45 @@ def compute_hk_trade_decision(
         position_size = min(int(80000 * scalar / price), 5000)
         stop_loss = round(price * (1 - max(atr / price, 0.08)), 2)
         magna_score = magna_signal.magna_score
-        conf = round(quality["quality_score"] * 0.5 + (magna_score / 10) * 0.3 + 0.2, 2)
+        # Base confidence: Q(45%) + MAGNA(25%) + Market(10%) + Sentiment(20%)
+        base_conf = quality["quality_score"] * 0.45 + (magna_score / 10) * 0.25 + 0.10
+        conf = base_conf
     elif magna_signal and magna_signal.magna_score >= 4:
         action = "WATCH"
         position_size = 0
         stop_loss = round(price * 0.92, 2)
         magna_score = magna_signal.magna_score
-        conf = round(quality["quality_score"] * 0.5 + (magna_score / 10) * 0.2, 2)
+        base_conf = quality["quality_score"] * 0.45 + (magna_score / 10) * 0.20
+        conf = base_conf
     else:
         action = "SKIP"
         position_size = 0
         stop_loss = 0
         magna_score = magna_signal.magna_score if magna_signal else 0
         conf = 0
+        base_conf = 0
+
+    # ── Sentiment Adjustment ──
+    sent_label = ""
+    sent_signals = []
+    if sentiment is not None and base_conf > 0:
+        from part3_sentiment import sentiment_confidence_adjustment
+        conf, sent_notes = sentiment_confidence_adjustment(sentiment, base_conf)
+        sent_label = sentiment.sentiment_label
+        sent_signals = sentiment.signals[:2]
+
+    conf = round(min(conf, 1.0), 2)
 
     triggers = ",".join(magna_signal.triggers) if magna_signal and magna_signal.triggers else ""
+
+    rationale_parts = [
+        f"{action} @ HKD{price:.2f}",
+        f"Stop:{stop_loss:.2f}",
+        f"Q={quality['quality_score']:.0%}",
+        f"MAGNA={magna_score}/10",
+    ]
+    if sent_label:
+        rationale_parts.append(f"😐{sent_label[:4]}")
 
     return {
         "ticker": ticker,
@@ -536,8 +561,9 @@ def compute_hk_trade_decision(
         "magna_score": magna_score,
         "quality_score": quality["quality_score"],
         "triggers": triggers,
-        "rationale": f"{action} @ HKD{price:.2f} | Stop:{stop_loss:.2f} | "
-                     f"Q={quality['quality_score']:.0%} | MAGNA={magna_score}/10",
+        "sentiment_label": sent_label,
+        "sentiment_signals": sent_signals,
+        "rationale": " | ".join(rationale_parts),
     }
 
 
@@ -639,6 +665,43 @@ def run_hk_pipeline(tickers: List[str] = None,
                   f"A={'✓' if s.sales_accel else '✗'} "
                   f"| {','.join(s.triggers) if s.triggers else '—'}{extra}")
 
+    # ── Stage 3: Sentiment Analysis ──
+    print(f"\n{'='*70}")
+    print(f"STAGE 3: Sentiment Analysis")
+    print(f"{'='*70}")
+
+    from part3_sentiment import batch_sentiment
+    signal_tickers = [s.ticker for _, s in signals[:30]]  # Top 30 MAGNA for sentiment
+    if signal_tickers:
+        print(f"Analyzing sentiment for {len(signal_tickers)} candidates...")
+        sentiment_results = batch_sentiment(signal_tickers, delay=0.15)
+
+        # Print sentiment summary
+        print(f"\n😐 Sentiment Summary:")
+        for tkr in signal_tickers[:15]:
+            sr = sentiment_results.get(tkr)
+            if sr:
+                sig_str = f" [{','.join(sr.signals[:2])}]" if sr.signals else ""
+                print(f"  {sr.sentiment_label:20s} {tkr:<10s} "
+                      f"comp={sr.composite_score:+.2f} "
+                      f"A={sr.analyst_score:+.2f} N={sr.news_score:+.2f} "
+                      f"S={sr.social_score:+.2f} T={sr.technical_score:+.2f}"
+                      f"{sig_str}")
+
+        contrarians = [tkr for tkr in signal_tickers
+                       if sentiment_results.get(tkr) and
+                       "CONTRARIAN_BUY" in sentiment_results[tkr].signals]
+        if contrarians:
+            print(f"\n  🔥 Contrarian Opportunities ({len(contrarians)}):")
+            for tkr in contrarians[:5]:
+                sr = sentiment_results[tkr]
+                # Find quality data
+                q_data = next((q for q, _ in signals if q['ticker'] == tkr), None)
+                q_score = q_data['quality_score'] if q_data else 0
+                print(f"    {tkr:<10s} Q={q_score:.0%} Sent={sr.composite_score:+.2f}")
+    else:
+        sentiment_results = {}
+
     # ── Trade Decisions ──
     print(f"\n{'='*70}")
     print(f"💼 Trade Decisions — HKD")
@@ -659,15 +722,17 @@ def run_hk_pipeline(tickers: List[str] = None,
         price = price_cache.get(q["ticker"], q.get("current_price", 0))
         if price <= 0:
             continue
-        dec = compute_hk_trade_decision(q["ticker"], q, s, price, market)
+        sent = sentiment_results.get(q["ticker"]) if sentiment_results else None
+        dec = compute_hk_trade_decision(q["ticker"], q, s, price, market, sentiment=sent)
         decisions.append(dec)
         emoji = {"BUY": "🟢", "WATCH": "🟡", "SKIP": "⚪"}.get(dec["action"], "❓")
+        sent_str = f"😐{dec.get('sentiment_label', '')[:4]}" if dec.get('sentiment_label') else ""
         print(f"  {emoji} {dec['action']:6s} {dec['ticker']:<10s} "
               f"{dec.get('name',''):28s} "
               f"HKD {dec['entry']:>8.2f} "
               f"Stop: {dec['stop_loss']:>8.2f} "
               f"Q={dec['quality_score']:.0%} "
-              f"Conf={dec['confidence']:.0%}")
+              f"Conf={dec['confidence']:.0%} {sent_str}")
 
     # ── Save ──
     elapsed = time.time() - start_time

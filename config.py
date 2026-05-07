@@ -157,8 +157,8 @@ class Part2Config:
 class RiskConfig:
     """Comprehensive risk management parameters."""
 
-    # Portfolio-level
-    max_positions: int = 8
+    # Portfolio-level — WIDE_STOP strategy
+    max_positions: int = 5
     max_positions_per_sector: int = 2
     cash_reserve_pct: float = 0.15
     max_portfolio_heat: float = 0.70
@@ -166,8 +166,8 @@ class RiskConfig:
     max_correlation: float = 0.70
 
     # Position-level
-    max_position_pct: float = 0.20
-    kelly_fraction: float = 0.25
+    max_position_pct: float = 0.18
+    kelly_fraction: float = 0.15
     min_position_size: float = 500.0
     max_position_size: float = 80000.0
 
@@ -176,12 +176,19 @@ class RiskConfig:
     require_volume: bool = True
     min_avg_volume: int = 50000
 
-    # Stop management
-    atr_stop_multiplier: float = 2.5            # Was 2.0 — wider to avoid being stopped out by noise
-    hard_stop_pct: float = 0.15                # Was 10% — widened to 15% (backtest showed 63% hard-stop loss rate)
-    trailing_stop_pct: float = 0.10            # Was 8% — slight widen for momentum trades
-    trailing_activate_after: float = 0.12       # Was 10% — need more room before trailing
-    time_stop_days: int = 90                   # Was 60 — more time for mean-reversion to play out
+    # Stop management — WIDE_STOP strategy (backtest-optimized 2026-05-07)
+    atr_stop_multiplier: float = 3.0            # Wider ATR stop for breathing room
+    hard_stop_pct: float = 0.25                # 25% — wide to allow mean-reversion
+    trailing_stop_pct: float = 0.12            # Slightly wider trail
+    trailing_activate_after: float = 0.18       # Activate trail after 18% gain
+    time_stop_days: int = 9999                 # No time limit — let trades play out
+
+    # Take Profit — FULL EXIT at first target (no partial fills)
+    # Partial fills were the #1 cause of losses in backtesting
+    # Selling 30% at +12% locked tiny wins while remaining 70% bled out
+    tp1_level_pct: float = 0.15                # TP1: +15%
+    tp2_level_pct: float = 0.25                # TP2: +25% (secondary)
+    tp3_level_pct: float = 0.40                # TP3: +40% (tertiary)
 
     # Market conditions
     vix_proxy_threshold: float = 0.25
@@ -221,3 +228,5 @@ P1C = Part1Config()
 P2C = Part2Config()
 RC = RiskConfig()
 PC = PipelineConfig()
+
+# Sentiment config is in part3_sentiment.py (SENT_CONFIG)

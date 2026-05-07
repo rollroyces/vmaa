@@ -122,6 +122,7 @@ class VMAACandidate:
     ticker: str
     part1: Part1Result
     part2: Part2Signal
+    sentiment: Optional[Any] = None     # SentimentResult from part3_sentiment
 
     # Combined assessment
     composite_rank: float = 0.0          # Overall ranking score
