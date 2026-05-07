@@ -990,17 +990,7 @@ class BacktestEngine:
         else:
             kelly_frac = self.config.kelly_fraction
         risk_capital = portfolio_value * kelly * kelly_frac * scalar
-        
-        # ── Sentiment Sizing Adjustment ──
-        if candidate.sentiment is not None:
-            sent = candidate.sentiment
-            # Contrarian buy: increase sizing (buy fear)
-            if "CONTRARIAN_BUY" in sent.signals:
-                risk_capital *= 1.30
-            # High analyst upside: moderate boost
-            if "HIGH_ANALYST_UPSIDE" in sent.signals:
-                risk_capital *= 1.15
-        
+
         raw_qty = int(risk_capital / risk_per_share) if risk_per_share > 0 else 0
 
         # Allocation-based limit
@@ -1107,6 +1097,9 @@ class BacktestEngine:
 
             triggered, reason, exit_price = pos.check_stop(bar_low, bar_high, bar_open)
             if triggered:
+                # R-1: Model gap-down fills for stop exits
+                if "hard_stop" in reason or "trailing_stop" in reason:
+                    exit_price = min(exit_price, bar_open)
                 exit_price = max(exit_price, 0.01)
                 self._close_position(ticker, date_str, exit_price, reason)
                 exited.append(ticker)

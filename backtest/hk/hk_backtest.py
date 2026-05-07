@@ -55,6 +55,7 @@ class HKPosition:
     stop_loss: float
     take_profits: List[Dict[str, Any]]
     trailing_stop_pct: float
+    trailing_activate_pct: float = 0.12  # % gain before trail activates
     trailing_activated: bool = False
     trailing_high: float = 0.0
     time_stop_days: int = 90
@@ -75,7 +76,7 @@ class HKPosition:
         self.unrealized_pnl_pct = (price / self.entry_price - 1) * 100
 
         if not self.trailing_activated:
-            if self.unrealized_pnl_pct >= 12.0:
+            if self.unrealized_pnl_pct >= self.trailing_activate_pct * 100:
                 self.trailing_activated = True
                 self.trailing_high = price
         else:
@@ -617,13 +618,21 @@ class HKBacktestEngine:
         if entry_price <= 0:
             return
 
-        # Confidence
-        confidence = quality.get("quality_score", 0) * 0.40
-        confidence += (magna.magna_score / 10) * 0.35 + 0.10
+        # R-5: Confidence aligned with risk.py compute_confidence()
+        # Part1(35%) + Part2(30%) + Market(10%) + Technical(10%) = 85%
+        # Sentiment(15%) not available in HK backtest (no Part3)
+        confidence = quality.get("quality_score", 0) * 0.35
+        confidence += (magna.magna_score / 10) * 0.30
+        confidence += 0.10  # Market assumption (assume ok if we're entering)
+        # Technical edge components
         if quality.get("ptl_ratio", 999) < 1.05:
             confidence += 0.05
         if magna.entry_ready:
             confidence += 0.05
+        if getattr(magna, 'gap_trigger', False):
+            confidence += 0.02
+        if getattr(magna, 'short_interest_score', 0) >= 2:
+            confidence += 0.03
         confidence = round(min(confidence, 1.0), 3)
 
         # Position sizing (Kelly)
@@ -704,6 +713,7 @@ class HKBacktestEngine:
             stop_loss=round(stop_loss, 2),
             take_profits=tps,
             trailing_stop_pct=self.config.trailing_stop_pct,
+            trailing_activate_pct=self.config.trailing_activate_after,
             trailing_high=entry_price,
             time_stop_days=self.config.time_stop_days,
             entry_method="hk_backtest",

@@ -415,14 +415,16 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
     details: Dict[str, Any] = {}
 
     # ── Cap 10 & 10 (prerequisites) ──
-    cap_ok, ipo_ok, ipo_years = _check_cap_and_ipo(info)
-
-    # If we have Part1 data, use it for cap check (with large_cap support)
     if part1 and part1.market_cap > 0:
+        # Use Part1's market cap (already vetted, more current)
         cap_ok = (part1.market_cap <= P2C.max_market_cap or
                   (part1.market_cap > P2C.max_market_cap and P2C.large_cap_enabled))
+        # Still need IPO check from yfinance info
+        _, ipo_ok, ipo_years = _check_cap_and_ipo(info)
+    else:
+        cap_ok, ipo_ok, ipo_years = _check_cap_and_ipo(info)
 
-    # Cap 10: hard requirement (per MAGNA spec, must be <$10B for momentum stocks)
+    # Market cap check (configurable — large_cap_enabled bypasses MAGNA's <$10B requirement)
     if not cap_ok:
         logger.debug(f"  {ticker}: Cap > $10B, rejected by MAGNA Cap 10")
         return None

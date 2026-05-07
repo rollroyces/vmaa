@@ -260,6 +260,16 @@ def run_risk_and_execute(
 
     from config import RC as RiskCfg
 
+    if broker is None:
+        logger.info("  No broker available — skipping execution")
+        return {
+            'decisions': [],
+            'executed_count': 0,
+            'skipped_count': 0,
+            'executed': [],
+            'skipped': [{'ticker': c.ticker, 'reason': 'no_broker'} for c in candidates],
+        }
+
     account = broker.get_account()
     portfolio_value = account.net_liquidation
     existing_tickers = [p.symbol for p in existing_positions]
@@ -493,14 +503,23 @@ def run_full_pipeline(
     candidates = run_sentiment(candidates)
 
     # ── Stage 4: Risk + Execute ──
-    from broker.tiger_broker import TigerBroker
-    broker = TigerBroker()
-    existing_positions = broker.get_positions()
-    account = broker.get_account()
+    try:
+        from broker.tiger_broker import TigerBroker
+        broker = TigerBroker()
+        existing_positions = broker.get_positions()
+        account = broker.get_account()
+    except ImportError:
+        logger.warning("Tiger Trade SDK not installed — running in analysis-only mode")
+        broker = None
+        existing_positions = []
+        account = None
 
-    logger.info(f"\n[Portfolio] ${account.net_liquidation:,.0f} | "
-                f"{len(existing_positions)} positions | "
-                f"BP: ${account.buying_power:,.0f}")
+    if account:
+        logger.info(f"\n[Portfolio] ${account.net_liquidation:,.0f} | "
+                    f"{len(existing_positions)} positions | "
+                    f"BP: ${account.buying_power:,.0f}")
+    else:
+        logger.info(f"\n[Portfolio] Analysis-only mode (no broker)")
 
     exec_result = run_risk_and_execute(
         candidates, market, broker, existing_positions, dry_run
@@ -573,9 +592,20 @@ def run_full_pipeline(
 
 def show_status() -> Dict[str, Any]:
     """Portfolio status + risk dashboard."""
-    from broker.tiger_broker import TigerBroker
+    try:
+        from broker.tiger_broker import TigerBroker
+        broker = TigerBroker()
+    except ImportError:
+        logger.warning("Tiger Trade SDK not installed — status unavailable")
+        return {
+            'timestamp': str(datetime.now()),
+            'market': {},
+            'account': {'error': 'broker_unavailable'},
+            'positions': [],
+            'active_orders': [],
+        }
+
     market = get_market_regime()
-    broker = TigerBroker()
     account = broker.get_account()
     positions = broker.get_positions()
     orders = broker.get_orders(limit=10)
@@ -708,10 +738,18 @@ if __name__ == '__main__':
 
             quality_pool, signals, candidates = run_stage2(part1_results)
 
-            from broker.tiger_broker import TigerBroker
+            try:
+                from broker.tiger_broker import TigerBroker
+                broker = TigerBroker()
+            except ImportError:
+                logger.warning("Tiger Trade SDK not installed — analysis-only mode")
+                broker = None
+
             market = get_market_regime()
-            broker = TigerBroker()
-            existing = broker.get_positions()
+            if broker:
+                existing = broker.get_positions()
+            else:
+                existing = []
             exec_result = run_risk_and_execute(
                 candidates, market, broker, existing,
                 dry_run=not args.live

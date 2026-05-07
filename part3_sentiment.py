@@ -307,17 +307,29 @@ def _extract_theme(headlines: List[str]) -> str:
 
 
 def _get_finnhub_key() -> Optional[str]:
+    """
+    Retrieve Finnhub API key from environment variable or OpenClaw config.
+    Tries multiple potential config paths for robustness.
+    """
     import os
     key = os.environ.get('FINNHUB_KEY', '')
     if key:
         return key
+
+    # Try multiple possible config locations
+    config_paths = [
+        os.path.expanduser('~/.openclaw/openclaw.json'),
+        os.path.expanduser('~/openclaw.json'),
+    ]
     try:
-        config_path = os.path.expanduser('~/.openclaw/openclaw.json')
-        if os.path.exists(config_path):
-            import json
-            with open(config_path) as f:
-                cfg = json.load(f)
-            return cfg.get('skills', {}).get('entries', {}).get('finnhub', {}).get('env', {}).get('FINNHUB_KEY', '')
+        import json
+        for config_path in config_paths:
+            if os.path.exists(config_path):
+                with open(config_path) as f:
+                    cfg = json.load(f)
+                key = cfg.get('skills', {}).get('entries', {}).get('finnhub', {}).get('env', {}).get('FINNHUB_KEY', '')
+                if key:
+                    return key
     except Exception:
         pass
     return ""

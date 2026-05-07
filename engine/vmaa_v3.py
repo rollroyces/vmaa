@@ -432,17 +432,16 @@ def _fetch_data_layer(
 
     # Fundamentals via SEC EDGAR + yfinance
     try:
-        from data.hybrid import HybridData
-        hd = HybridData()
+        from data.hybrid import get_fundamentals as hybrid_get_fundamentals
         for ticker in tickers:
             try:
-                data = hd.get_fundamentals(ticker)
+                data = hybrid_get_fundamentals(ticker)
                 if data:
                     fundamentals_data[ticker] = data
             except Exception:
                 pass
     except ImportError:
-        logger.warning("HybridData unavailable for fundamentals — using yfinance")
+        logger.warning("data/hybrid.py unavailable for fundamentals — using yfinance")
         try:
             import yfinance as yf
             for ticker in tickers:
