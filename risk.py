@@ -402,6 +402,18 @@ def generate_trade_decision(
     # ── Confidence ──
     confidence = compute_confidence(candidate, market)
 
+    # ── VCP Adjustment (Stage 2.5) ──
+    vcp = getattr(candidate, '_vcp', None)
+    if vcp is not None and vcp.vcp_detected:
+        vcp_stop_pct = vcp.stop_pct if vcp.stop_pct > 0 else (entry_price - stop_loss) / entry_price
+        orig_stop_pct = (entry_price - stop_loss) / entry_price if entry_price > 0 else 0
+        # Tighten stop by VCP suggestion (with floor)
+        new_stop_pct = min(orig_stop_pct, vcp_stop_pct * 1.2)  # Give 20% breathing room from VCP stop
+        stop_loss = round(entry_price * (1 - new_stop_pct), 2)
+        stop_type = f"VCP_{stop_type}"
+        confidence = round(min(confidence + 0.10 * vcp.vcp_quality, 1.0), 4)
+        risk_flags.append(f"VCP_confirmed_Q={vcp.vcp_quality:.0%}")
+
     # ── Position Sizing ──
     quantity, position_pct, risk_capital = compute_position_size(
         ticker, entry_price, stop_loss, portfolio_value, confidence, market

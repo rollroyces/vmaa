@@ -41,6 +41,10 @@ from config import PC, P1C, P2C, RC as RiskCfg
 
 from part1_fundamentals import batch_screen as part1_batch
 from part2_magna import batch_screen_magna as part2_batch
+from part2b_vcp import (
+    batch_vcp_filter, apply_vcp_to_stop, apply_vcp_to_confidence,
+    apply_vcp_to_position_size, get_vcp_entry_quality,
+)
 from risk import (
     get_market_regime, generate_trade_decision,
     check_correlation, compute_confidence,
@@ -242,6 +246,65 @@ def run_stage2(quality_pool: List[Part1Result]) -> tuple:
                         f"[{sig_str}]")
 
     return quality_pool, signals, candidates
+
+
+def run_vcp_filter(
+    candidates: List[VMAACandidate],
+    part1_map: dict = None,
+) -> List[VMAACandidate]:
+    """
+    Stage 2.5: VCP Precision Filter.
+
+    Runs Volatility Contraction Pattern analysis on entry-ready candidates.
+    VCP enhances — it never blocks entries. Non-VCP candidates proceed
+    with standard WIDE_STOP parameters.
+
+    Returns candidates with VCP metadata attached for Risk stage use.
+    """
+    logger.info("\n" + "=" * 60)
+    logger.info("STAGE 2.5: VCP Precision Filter (Minervini)")
+    logger.info("=" * 60)
+
+    entry_ready = [c for c in candidates if c.entry_triggered]
+    logger.info(f"Entry-ready candidates: {len(entry_ready)}")
+
+    if not entry_ready:
+        logger.info("No entry-ready candidates — skipping VCP")
+        return candidates
+
+    vcp_results = batch_vcp_filter(entry_ready)
+
+    vcp_confirmed = 0
+    cache = {}  # Store VCP results on candidate objects via _vcp attribute
+
+    for c in candidates:
+        ticker = c.ticker
+        vcp = vcp_results.get(ticker) if c.entry_triggered else None
+        c._vcp = vcp  # Attach VCP result for Risk stage
+
+        if vcp and vcp.vcp_detected:
+            vcp_confirmed += 1
+            logger.info(
+                f"  ✅ {ticker:6s} VCP Q={vcp.vcp_quality:.0%} "
+                f"waves={vcp.contractions} "
+                f"pivot_ATR={vcp.pivot_volatility_pct:.1%} "
+                f"dry_up={vcp.volume_dry_up_ratio:.0%} "
+                f"[{get_vcp_entry_quality(vcp)}]"
+            )
+        elif vcp:
+            logger.debug(
+                f"  ❌ {ticker:6s} VCP Q={vcp.vcp_quality:.0%} "
+                f"{vcp.rationale[:60]}"
+            )
+        else:
+            logger.debug(f"  ⬜ {ticker:6s} no VCP data")
+
+    logger.info(
+        f"\nVCP Summary: {vcp_confirmed}/{len(entry_ready)} confirmed, "
+        f"{len(entry_ready) - vcp_confirmed} proceed with standard params"
+    )
+
+    return candidates
 
 
 def run_risk_and_execute(
@@ -505,6 +568,9 @@ def run_full_pipeline(
     # ── Stage 2: Part 2 MAGNA ──
     _, signals, candidates = run_stage2(quality_pool)
 
+    # ── Stage 2.5: VCP Precision Filter ──
+    candidates = run_vcp_filter(candidates)
+
     # ── Stage 3: Sentiment Analysis ──
     candidates = run_sentiment(candidates)
 
@@ -743,6 +809,9 @@ if __name__ == '__main__':
             print(f"  {len(part1_results)}/{len(pool_tickers)} still pass Part 1")
 
             quality_pool, signals, candidates = run_stage2(part1_results)
+
+            # Stage 2.5: VCP Filter
+            candidates = run_vcp_filter(candidates)
 
             try:
                 from broker.tiger_broker import TigerBroker

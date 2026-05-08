@@ -24,9 +24,9 @@ WIDE_STOP is the winner of 8 backtest experiments: full TP exit, wide stops for 
 │  Stage 2: Part 2 — MAGNA 53/10 Momentum                         │
 │         │  → Entry-ready Candidates                              │
 │         ▼                                                        │
-│  Stage 2.5: Part 2B — VCP Precision Filter 🆕                   │
+│  Stage 2.5: Part 2B — VCP Precision Filter ✅ (implemented)     │
 │         │  → Volatility Contraction Pattern detection            │
-│         │  → Tightened stops for confirmed setups                │
+│         │  → Tightened stops + boosted confidence for VCP        │
 │         ▼                                                        │
 │  Stage 3: Part 3 — Sentiment Analysis (5 sources)                │
 │         │  → Filtered Buy Signals                                │
@@ -159,9 +159,15 @@ python3 engine/demo.py --screen AAPL,MSFT
 - `vcp_pivot_price`: float — optimal entry at pivot breakout
 - `vcp_stop_suggestion`: float — tightened stop based on pivot structure
 
-> 📄 Full feasibility report: `research/vcp_feasibility_report.md`
+> 📄 Module: `part2b_vcp.py` | Feasibility report: `research/vcp_feasibility_report.md`
 
-### Stage 3: Part 3 — Sentiment Analysis 🆕
+**CLI:**
+```bash
+# Quick VCP check for any ticker
+python3 part2b_vcp.py INMD TMDX CDRE AAPL
+```
+
+### Stage 3: Part 3 — Sentiment Analysis
 
 **5-source multi-dimensional sentiment scoring** (weighted composite):
 
@@ -249,14 +255,15 @@ python3 engine/demo.py --screen AAPL,MSFT
 
 ## Changelog
 
-### VCP Integration (2026-05-08)
+### VCP Implementation (2026-05-08) ✅
 | # | Change | Impact |
 |---|--------|--------|
-| 1 | **Stage 2.5 VCP Filter** — Volatility Contraction Pattern detection | Filters false MAGNA gap-up signals during free-falls |
-| 2 | **Tighter VCP stops** (10-14% vs 25%) | Same dollar risk → +84% larger positions |
-| 3 | **VCP enhances, never blocks** — non-VCP entries still fire normally | Zero downside, opt-in precision |
-| 4 | **Zero new API cost** — reuses existing yfinance data | Negligible compute overhead (~5ms/candidate) |
-| 5 | **HK + US VCP analysis** — cross-market pattern detection | Unified VCP framework for both markets |
+| 1 | **`part2b_vcp.py`** — 430-line VCP detection module | 3-contraction wave detection, pivot analysis, quality scoring |
+| 2 | **Pipeline Stage 2.5** — auto-runs between MAGNA and Sentiment | Seamless integration, no CLI changes needed |
+| 3 | **VCP-enhanced Risk** — `risk.py` auto-tightens stops + boosts confidence | 10-14% stops on VCP vs 25% standard |
+| 4 | **VCP enhances, never blocks** — non-VCP entries proceed normally | Zero breaking changes, pure additive |
+| 5 | **CLI quick-check** — `python3 part2b_vcp.py TICKER` | Instant VCP quality assessment |
+| 6 | **Zero new API cost** — reuses existing yfinance data | ~5ms per candidate compute overhead |
 
 ### WIDE_STOP (2026-05-07)
 | # | Change | Impact |

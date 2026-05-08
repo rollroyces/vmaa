@@ -2,11 +2,12 @@
 """
 VMAA 2.0 — Shared Data Models
 ==============================
-Two-stage value + momentum framework:
+Two-and-a-half-stage value + momentum + VCP framework:
   Stage 1: Core Financial Fundamentals (Quality Pool)
   Stage 2: MAGNA 53/10 Momentum Triggers (Entry Signal)
+  Stage 2.5: VCP Precision Filter (Volatility Contraction Pattern)
 
-All dataclasses shared across Part1, Part2, Pipeline, and Risk modules.
+All dataclasses shared across Part1, Part2, Part2B, Pipeline, and Risk modules.
 """
 from __future__ import annotations
 
