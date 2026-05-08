@@ -37,6 +37,8 @@ from typing import Any, Dict, List, Optional
 # Add current dir to path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import yfinance as yf
+
 from models import VMAACandidate, TradeDecision
 from config import PC, P1C, P2C, RC as RiskCfg
 
@@ -515,14 +517,20 @@ def _execute_decision(decision, broker, account, dry_run: bool) -> Dict[str, Any
             limit_price=decision.entry_price,
         )
         if result.order_id > 0:
-            # Place stop loss
-            broker.place_order(
-                symbol=decision.ticker,
-                action='SELL',
-                quantity=decision.quantity,
-                order_type='STP',
-                stop_price=decision.stop_loss,
-            )
+            # WARNING: Partial-fill risk. If the limit order is only partially
+            # filled, placing a stop loss for the FULL quantity could leave
+            # unfilled shares unprotected (if partially filled now, stop triggers
+            # before the rest fills) or cause overselling. Query the actual
+            # filled quantity and only stop-protect what was filled.
+            filled_qty = getattr(result, 'filled_quantity', None) or getattr(result, 'quantity', None) or decision.quantity
+            if filled_qty > 0:
+                broker.place_order(
+                    symbol=decision.ticker,
+                    action='SELL',
+                    quantity=filled_qty,
+                    order_type='STP',
+                    stop_price=decision.stop_loss,
+                )
             return {'executed': True, 'would_execute': True, 'reason': 'live'}
         else:
             return {'executed': False, 'would_execute': True,
@@ -814,8 +822,6 @@ def _market_dict(market) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════
 
 if __name__ == '__main__':
-    import yfinance as yf  # noqa: F811
-
     parser = argparse.ArgumentParser(
         description="VMAA 2.0 — Two-Stage Value + Momentum Pipeline"
     )

@@ -403,13 +403,13 @@ def _compute_vcp_stop(
     # Use the tighter of the two (closer to entry = less risk)
     vcp_stop = max(atr_stop, structural_stop)
 
-    # Floor: never tighter than 8% from entry
-    min_stop = current_price * 0.92
-    vcp_stop = max(vcp_stop, min_stop)
+    # Floor: never tighter than 8% from entry (stop price ≥ 92% of current)
+    tightest_stop = current_price * 0.92
+    # Ceiling: never wider than 15% from entry (stop price ≥ 85% of current)
+    widest_stop = current_price * 0.85
 
-    # Ceiling: never wider than 15% from entry
-    max_stop = current_price * 0.85
-    vcp_stop = min(vcp_stop, max_stop)
+    # Clamp: stop price between widest_stop and tightest_stop
+    vcp_stop = max(widest_stop, min(vcp_stop, tightest_stop))
 
     stop_pct = (current_price - vcp_stop) / current_price if current_price > 0 else 0.15
 

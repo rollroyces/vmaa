@@ -493,13 +493,13 @@ def _evaluate_part1(ticker: str, info: dict, hist: pd.DataFrame,
     asset_pass, asset_growth, earnings_growth, asset_score, asset_status = \
         _check_asset_efficiency(t)
     if asset_pass:
+        quality_score += asset_score
         passed_criteria.append("asset_efficiency")
     elif asset_status == "n/a":
         warnings.append("asset_efficiency_n/a")
-        quality_score += P1C.weight_asset_efficiency * 0.5  # Partial credit if N/A
+        quality_score += P1C.weight_asset_efficiency * 0.5  # partial credit for unavailable
     else:
         failed_criteria.append("asset_efficiency")
-    quality_score += asset_score
 
     # ── C6: Interest Rate Sensitivity ──
     ir_sensitive, debt_to_equity, beta = _check_ir_sensitivity(info)
@@ -621,11 +621,33 @@ def _fmt_cap(cap: float) -> str:
 # Sector Median Computation (for enhanced B/M, ROA, EBITDA comparison)
 # ═══════════════════════════════════════════════════════════════════
 
+def _fetch_sector_info(ticker: str):
+    """Fetch a single ticker's sector metrics. Returns (sector, data_dict) or None."""
+    try:
+        info = yf.Ticker(ticker).info
+        sector = info.get('sector', 'Other')
+        price = get_price_from_info(info, ticker)
+        bv = info.get('bookValue', 0)
+        roa = info.get('returnOnAssets')
+        ebitda = info.get('ebitda', 0)
+        rev = info.get('totalRevenue', 0)
+        fcf = info.get('freeCashflow', 0)
+        mcap = info.get('marketCap', 0)
+        return sector, {
+            'bm': bv / price if bv and price > 0 else None,
+            'roa': float(roa) if roa is not None else None,
+            'ebitda_margin': ebitda / rev if ebitda and rev else None,
+            'fcf_yield': fcf / mcap if fcf and mcap else None,
+        }
+    except Exception:
+        return None
+
+
 def compute_sector_medians(tickers: List[str],
                            sample_size: int = 150) -> Dict[str, Dict[str, float]]:
     """
     Compute sector-level median metrics for relative comparison.
-    Sample a subset for speed.
+    Sample a subset, fetch in parallel via ThreadPoolExecutor.
     Returns: {sector: {bm_median, roa_median, ebitda_median, fcf_yield_median}}
     """
     import random
@@ -634,30 +656,15 @@ def compute_sector_medians(tickers: List[str],
     sample = random.sample(tickers, min(sample_size, len(tickers)))
 
     sector_data: Dict[str, List[Dict]] = {}
-    for ticker in sample:
-        try:
-            info = yf.Ticker(ticker).info
-            sector = info.get('sector', 'Other')
-            price = get_price_from_info(info, ticker)
-            bv = info.get('bookValue', 0)
-            roa = info.get('returnOnAssets')
-            ebitda = info.get('ebitda', 0)
-            rev = info.get('totalRevenue', 0)
-            fcf = info.get('freeCashflow', 0)
-            mcap = info.get('marketCap', 0)
-
-            if sector not in sector_data:
-                sector_data[sector] = []
-
-            sector_data[sector].append({
-                'bm': bv / price if bv and price > 0 else None,
-                'roa': float(roa) if roa is not None else None,
-                'ebitda_margin': ebitda / rev if ebitda and rev else None,
-                'fcf_yield': fcf / mcap if fcf and mcap else None,
-            })
-            time.sleep(0.1)
-        except Exception:
-            continue
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(_fetch_sector_info, t): t for t in sample}
+        for future in as_completed(futures):
+            result = future.result()
+            if result:
+                sector, data = result
+                if sector not in sector_data:
+                    sector_data[sector] = []
+                sector_data[sector].append(data)
 
     medians = {}
     for sector, values in sector_data.items():

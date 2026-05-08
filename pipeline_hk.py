@@ -605,7 +605,24 @@ def run_hk_pipeline(tickers: List[str] = None,
                     output_path: str = None) -> dict:
     """Run VMAA-HK two-stage pipeline."""
     start_time = time.time()
-    tickers = [t for t in (tickers or HSI_TICKERS) if not t.startswith("0011.HK")]  # skip delisted
+
+    # Generic delisted/inactive stock filter — fetch basic info for all
+    # tickers and skip any where trailingPE is None or regularMarketPrice is 0.
+    # This replaces the old hardcoded skip of 0011.HK.
+    raw_tickers = tickers or HSI_TICKERS
+    tickers = []
+    for t in raw_tickers:
+        try:
+            info = yf.Ticker(t).info
+            if info.get('trailingPE') is None or info.get('regularMarketPrice', 0) == 0:
+                logger.debug(f"  Skipping {t}: delisted/inactive (trailingPE=None or price=0)")
+                continue
+            tickers.append(t)
+        except Exception:
+            logger.debug(f"  Skipping {t}: info fetch failed")
+            continue
+    if len(tickers) < len(raw_tickers):
+        logger.info(f"  Filtered out {len(raw_tickers) - len(tickers)} delisted/inactive stocks")
 
     print(f"\n{'='*70}")
     print(f"🇭🇰 VMAA-HK Pipeline — {'DRY RUN' if dry_run else 'LIVE'} — "

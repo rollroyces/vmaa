@@ -55,7 +55,7 @@ def compute_stops_adaptive(
     atr_pct = atr / entry_price if entry_price > 0 else 0.03
 
     # ── 1. Dynamic ATR multiplier ──
-    base_mult = float(RC.atr_stop_multiplier)  # 2.5
+    base_mult = float(RC.atr_stop_multiplier)  # hardcoded; actual value from RC.atr_stop_multiplier (default 2.0)
 
     # Price level: low-price stocks are noisier, need wider stops
     if entry_price < 10:

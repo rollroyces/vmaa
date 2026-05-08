@@ -18,6 +18,10 @@ Usage:
 from __future__ import annotations
 
 import logging
+# Suppress tiger_openapi SDK debug noise
+import logging as _logging
+_logging.getLogger("tiger_openapi").setLevel(_logging.WARNING)
+_logging.getLogger("getmac").setLevel(_logging.WARNING)
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -32,6 +36,14 @@ from data.sec_edgar import (
     clear_cache as sec_clear_cache,
 )
 
+# Tiger Trade broker import (module-level for reuse)
+try:
+    from broker.tiger_broker import TigerBroker
+    _TIGER_AVAILABLE = True
+except ImportError:
+    TigerBroker = None
+    _TIGER_AVAILABLE = False
+
 logger = logging.getLogger("vmaa.data.hybrid")
 
 
@@ -45,7 +57,8 @@ def _get_tiger_qc():
     global _TIGER_QC
     if _TIGER_QC is None:
         try:
-            from broker.tiger_broker import TigerBroker
+            if TigerBroker is None:
+                return None
             broker = TigerBroker()
             _TIGER_QC = broker.quote_client
         except Exception as e:
@@ -95,6 +108,43 @@ def get_price(ticker: str) -> Tuple[float, int, str, str]:
         pass
     
     return 0.0, 0, "none", ""
+
+
+def get_prices_batch(tickers: List[str]) -> Dict[str, Tuple[float, int, str, str]]:
+    """
+    Batch price fetch via Tiger delay quotes (1 API call for all tickers).
+    Falls back to individual yfinance calls for tickers Tiger fails on.
+    
+    Returns: {ticker: (price, volume, source, date)}
+    """
+    if not tickers:
+        return {}
+    
+    results: Dict[str, Tuple[float, int, str, str]] = {}
+    
+    # Try Tiger batch first
+    qc = _get_tiger_qc()
+    if qc:
+        try:
+            briefs = qc.get_stock_delay_briefs(tickers)
+            if briefs is not None and not briefs.empty:
+                for _, row in briefs.iterrows():
+                    sym = str(row.get("symbol", ""))
+                    close = float(row.get("close", 0))
+                    vol = int(row.get("volume", 0))
+                    if close > 0 and sym:
+                        results[sym] = (close, vol, "tiger_delayed", datetime.now().strftime("%Y-%m-%d"))
+        except Exception:
+            pass
+    
+    # Fallback for tickers Tiger didn't cover
+    for t in tickers:
+        if t not in results:
+            price, vol, src, dt = get_price(t)  # will use yfinance fallback
+            if price > 0:
+                results[t] = (price, vol, src, dt)
+    
+    return results
 
 
 def get_52w_range(ticker: str) -> Tuple[float, float]:
