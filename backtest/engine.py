@@ -941,6 +941,65 @@ class BacktestEngine:
             
             self._execute_entry(candidate, date_str, scalar)
 
+    def _compute_per_stock_trail(self, ticker: str, p1, entry_price: float,
+                                  date_str: str) -> tuple:
+        """
+        Per-stock adaptive trailing stop for backtest — v3.2.2b (Learned + calibrated).
+        
+        Returns (trail_width, trail_activation) tuple.
+        
+        Formula:
+          trail    = max(0.06, min(0.15, atr_pct * 1.5))     # moderate, vol-scaled
+          activate = 0.16 base; lower if pre_max_dd < -12%    # TP1-adjacent
+        """
+        atr_pct = 0.03  # default
+        pre_max_dd = -0.05  # default
+        
+        try:
+            hist = self._daily_prices.get(ticker)
+            if hist is not None and len(hist) >= 21:
+                target = pd.Timestamp(date_str)
+                
+                # ATR from last 14 bars before entry
+                hist_slice = hist[hist.index <= target].tail(14)
+                if len(hist_slice) >= 14:
+                    high = hist_slice['High'].values
+                    low = hist_slice['Low'].values
+                    close = hist_slice['Close'].values
+                    tr = [max(high[i] - low[i],
+                              abs(high[i] - close[i-1]),
+                              abs(low[i] - close[i-1]))
+                          for i in range(1, len(high))]
+                    atr = sum(tr) / len(tr) if tr else 0
+                    atr_pct = float(atr / entry_price) if entry_price > 0 else 0.03
+                
+                # Pre-entry max drawdown (last 20 bars before entry)
+                pre_window = hist[hist.index <= target].tail(21)['Close'].values
+                if len(pre_window) >= 20:
+                    pre_window = pre_window[-20:]
+                    running_max = np.maximum.accumulate(pre_window)
+                    drawdowns = (pre_window - running_max) / running_max
+                    pre_max_dd = float(np.min(drawdowns))
+        except Exception:
+            pass
+        
+        # Learned formula (v3.2.2b)
+        trail = max(0.06, min(0.15, atr_pct * 1.5))
+        
+        if pre_max_dd < -0.12:
+            activate = max(0.12, 0.16 + pre_max_dd * 0.3)
+        else:
+            activate = 0.16
+        
+        # Clamp
+        trail = max(0.06, min(0.15, trail))
+        activate = max(0.12, min(0.20, activate))
+        
+        if activate <= trail:
+            activate = trail + 0.03
+        
+        return round(trail, 3), round(activate, 3)
+
     def _execute_entry(self, candidate: VMAACandidate, date_str: str,
                        scalar: float) -> None:
         """Execute a simulated buy order."""
@@ -1026,8 +1085,8 @@ class BacktestEngine:
             cost_basis=position_value,
             stop_loss=round(stop_loss, 2),
             take_profits=tps,
-            trailing_stop_pct=self.config.trailing_stop_pct,
-            trailing_activate_pct=self.config.trailing_activate_after,
+            trailing_stop_pct=(_trail := self._compute_per_stock_trail(ticker, p1, entry_price, date_str))[0],
+            trailing_activate_pct=_trail[1],
             trailing_high=entry_price,
             time_stop_days=self.config.time_stop_days,
             entry_method="backtest",

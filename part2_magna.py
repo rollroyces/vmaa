@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -73,29 +74,43 @@ def screen_magna(ticker: str, part1: Optional[Part1Result] = None,
         return None
 
 
-def batch_screen_magna(quality_pool: List[Part1Result]) -> List[Part2Signal]:
+def batch_screen_magna(quality_pool: List[Part1Result], max_workers: int = 12) -> List[Part2Signal]:
     """
     Screen all stocks in the quality pool for MAGNA signals.
     Returns only stocks with valid signals, sorted by MAGNA score.
+    
+    Uses ThreadPoolExecutor for parallel yfinance I/O.
     """
     signals = []
     total = len(quality_pool)
-    logger.info(f"Part 2: Screening {total} quality-pool stocks for MAGNA signals...")
+    logger.info(f"Part 2: Screening {total} quality-pool stocks for MAGNA signals (workers={max_workers})...")
 
-    for i, p1 in enumerate(quality_pool):
-        if (i + 1) % 20 == 0:
-            logger.info(f"  Part 2 progress: {i+1}/{total} ({len(signals)} signals)")
-        try:
-            signal = screen_magna(p1.ticker, part1=p1)
-            if signal:
-                signals.append(signal)
-        except Exception:
-            pass
-        time.sleep(0.15)
+    completed = 0
+    batch_start = time.time()
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(screen_magna, p1.ticker, part1=p1): p1
+            for p1 in quality_pool
+        }
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 50 == 0 or completed == total:
+                elapsed = time.time() - batch_start
+                rate = completed / elapsed if elapsed > 0 else 0
+                logger.info(f"  Part 2 progress: {completed}/{total} "
+                            f"({len(signals)} signals, {rate:.0f} stocks/s)")
+            try:
+                signal = future.result(timeout=45)
+                if signal:
+                    signals.append(signal)
+            except Exception:
+                pass
 
+    elapsed = time.time() - batch_start
     signals.sort(key=lambda s: (s.magna_score, s.entry_ready), reverse=True)
+    entry_ready = [s for s in signals if s.entry_ready]
     logger.info(f"Part 2 complete: {len(signals)}/{total} have MAGNA signals "
-                f"({len([s for s in signals if s.entry_ready])} entry-ready)")
+                f"({len(entry_ready)} entry-ready) in {elapsed:.0f}s")
     return signals
 
 
@@ -251,15 +266,18 @@ def _check_gap_up(hist: pd.DataFrame, info: dict) -> Tuple[bool, bool, float, in
         gap_pct = best_gap
         gap_day_volume = best_gap_day_volume
         # Check if best gap day volume ≥ multiplier × 20-day average
+        # AND absolute volume ≥ 100K (gap_min_volume)
         vol_window = recent['Volume'].iloc[max(0, best_gap_idx - 20):best_gap_idx]
         if len(vol_window) >= 5:
             avg_vol_20d = float(vol_window.mean())
             if avg_vol_20d > 0:
-                volume_confirmed = gap_day_volume >= avg_vol_20d * P2C.gap_volume_multiplier
+                volume_confirmed = (gap_day_volume >= avg_vol_20d * P2C.gap_volume_multiplier
+                                    and gap_day_volume >= P2C.gap_min_volume)
         elif gap_day_volume > 0:
             avg_vol = info.get('averageVolume', 0) or 0
             if avg_vol > 0:
-                volume_confirmed = gap_day_volume >= avg_vol * P2C.gap_volume_multiplier
+                volume_confirmed = (gap_day_volume >= avg_vol * P2C.gap_volume_multiplier
+                                    and gap_day_volume >= P2C.gap_min_volume)
         else:
             # Not enough volume history — flag but don't block gap signal
             logger.warning(f"  Gap up detected but only {len(vol_window)} bars of volume "

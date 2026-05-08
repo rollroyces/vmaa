@@ -90,7 +90,84 @@ def get_market_regime() -> MarketRegime:
 
 
 # ═══════════════════════════════════════════════════════════════════
-# Position Sizing (Quarter-Kelly)
+# Per-Stock Adaptive Trailing Stop (v3.2.1)
+# ═══════════════════════════════════════════════════════════════════
+
+def compute_trailing_stop(candidate: VMAACandidate, entry_price: float,
+                          hist: pd.DataFrame) -> tuple:
+    """
+    Per-stock adaptive trailing stop — v3.2.2b (Learned + calibrated).
+    
+    ML-informed formula refined through head-to-head simulation on 17 trades.
+    Key findings from trail_learner + calibration:
+      - Too-tight trail (4%) DESTROYS TP1 trades — activation must stay near TP1
+      - Optimal width: moderate (6-10%), scaled by volatility
+      - Activation: high base (16%), lower ONLY for extreme gap-risk stocks
+      - Pre-entry drawdown >12% is the signal to activate earlier
+    
+    Returns: (trailing_stop_pct, trailing_activate_pct)
+    
+    Formula (v3.2.2b):
+      trail    = max(0.06, min(0.15, atr_pct * 1.5))     # moderate, vol-scaled
+      activate = 0.16 base; lower if pre_max_dd < -12%    # TP1-adjacent
+      Clamp: trail [6-15%], activate [12-20%]
+    """
+    # ── Compute ATR ──
+    atr_pct = 0.03  # default for stocks without enough history
+    try:
+        if hist is not None and len(hist) >= 14:
+            high = hist['High'].values
+            low = hist['Low'].values
+            close = hist['Close'].values
+            tr = [max(high[i] - low[i],
+                      abs(high[i] - close[i-1]),
+                      abs(low[i] - close[i-1]))
+                  for i in range(1, len(high))]
+            atr = sum(tr[-14:]) / 14 if len(tr) >= 14 else sum(tr) / len(tr)
+            atr_pct = float(atr / entry_price) if entry_price > 0 else 0.03
+    except Exception:
+        pass
+    
+    # ── Pre-entry max drawdown (proxy for gap/drawdown risk) ──
+    pre_max_dd = -0.05  # default: assume moderate pre-entry decline
+    try:
+        if hist is not None and len(hist) >= 21:
+            pre_window = hist['Close'].values[-20:]
+            running_max = np.maximum.accumulate(pre_window)
+            drawdowns = (pre_window - running_max) / running_max
+            pre_max_dd = float(np.min(drawdowns))  # negative, e.g. -0.15
+    except Exception:
+        pass
+    
+    # ── Learned formula (v3.2.2b) ──
+    # Width: vol-scaled, moderate (6-10% typical)
+    trail = max(0.06, min(0.15, atr_pct * 1.5))
+    
+    # Activation: high base (near TP1), lower for extreme gap risk
+    if pre_max_dd < -0.12:
+        # Gap-prone: activate earlier to catch reversals
+        activate = max(0.12, 0.16 + pre_max_dd * 0.3)
+    else:
+        activate = 0.16
+    
+    # Clamp
+    trail = max(0.06, min(0.15, trail))
+    activate = max(0.12, min(0.20, activate))
+    
+    # Ensure activate > trail (otherwise trail triggers immediately)
+    if activate <= trail:
+        activate = trail + 0.03
+    
+    logger.info(
+        f"  {candidate.ticker}: trail={trail:.0%} act={activate:.0%} "
+        f"(ATR={atr_pct:.1%}, preDD={pre_max_dd:.0%})"
+    )
+    
+    return round(trail, 3), round(activate, 3)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Position Sizing (Fixed Fractional)
 # ═══════════════════════════════════════════════════════════════════
 
 def compute_position_size(
@@ -158,15 +235,17 @@ def compute_take_profits(
     market: MarketRegime,
 ) -> List[Dict[str, Any]]:
     """
-    Compute take profit levels — WIDE_STOP strategy.
+    Compute take profit levels — FIXED R:R strategy.
     
     Changed from 3-tier partial to single primary TP1 (100% exit).
     Partial fills were the #1 cause of losses: selling 30% at +12%
     locked tiny wins while remaining 70% bled to hard stop.
     
-    TP1: +15% (100% sell) — primary exit
-    TP2: +25% — secondary (if not already exited)
-    TP3: +40% — tertiary
+    v3.2: Trailing stop DISABLED — all winners now run to TP1 (20%).
+    
+    TP1: +20% (100% sell) — primary exit
+    TP2: +30% — secondary (fallback if TP1 not filled)
+    TP3: +50% — tertiary (let winners truly run if TP1/2 missed)
     """
     tp1 = round(entry_price * (1 + RC.tp1_level_pct), 2)
     tp2 = round(entry_price * (1 + RC.tp2_level_pct), 2)
@@ -377,7 +456,8 @@ def generate_trade_decision(
     except Exception:
         return TradeDecision(
             ticker=ticker, action='HOLD', quantity=0,
-            entry_price=0, stop_loss=0, take_profits=[],
+            entry_price=0, entry_method='n/a',
+            stop_loss=0, stop_type='n/a', take_profits=[],
             trailing_stop_pct=0, time_stop_days=0,
             position_pct=0, risk_amount=0, reward_ratio=0,
             confidence_score=0, risk_flags=['data_fetch_failed'],
@@ -413,6 +493,11 @@ def generate_trade_decision(
         stop_type = f"VCP_{stop_type}"
         confidence = round(min(confidence + 0.10 * vcp.vcp_quality, 1.0), 4)
         risk_flags.append(f"VCP_confirmed_Q={vcp.vcp_quality:.0%}")
+
+    # ── Per-Stock Adaptive Trailing Stop (v3.2.1) ──
+    trailing_stop_pct, trailing_activate_pct = compute_trailing_stop(
+        candidate, entry_price, hist
+    )
 
     # ── Position Sizing ──
     quantity, position_pct, risk_capital = compute_position_size(
@@ -490,7 +575,7 @@ def generate_trade_decision(
         stop_loss=stop_loss,
         stop_type=stop_type,
         take_profits=take_profits,
-        trailing_stop_pct=RC.trailing_stop_pct,
+        trailing_stop_pct=trailing_stop_pct,
         time_stop_days=RC.time_stop_days,
         position_pct=position_pct,
         risk_amount=risk_capital,
@@ -498,6 +583,7 @@ def generate_trade_decision(
         confidence_score=confidence,
         risk_flags=risk_flags,
         rationale=rationale,
+        trailing_activate_pct=trailing_activate_pct,
     )
 
 

@@ -161,6 +161,7 @@ class TradeDecision:
     confidence_score: float            # 0.0–1.0
     risk_flags: List[str]
     rationale: str
+    trailing_activate_pct: float = 0.15  # v3.2.1: per-stock adaptive (default 15%)
 
 
 # ═══════════════════════════════════════════════════════════════════

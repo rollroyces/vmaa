@@ -87,12 +87,13 @@ def compute_stops_adaptive(
     atr_stop = round(entry_price - (atr * base_mult), 2) if atr > 0 else 0
 
     # ── 2. Dynamic hard stop % ──
+    # FIXED R:R (2026-05-08): tighter stops across all price levels
     if entry_price < 10:
-        hard_pct = 0.22    # 22% for penny stocks
+        hard_pct = 0.18    # 18% for sub-$10 (was 22%)
     elif entry_price < 30:
-        hard_pct = 0.18    # 18% for small caps
+        hard_pct = 0.15    # 15% for small-mid caps (was 18%)
     else:
-        hard_pct = float(RC.hard_stop_pct)  # 15% (config default)
+        hard_pct = float(RC.hard_stop_pct)  # 15% standard
 
     hard_stop = round(entry_price * (1 - hard_pct), 2)
 

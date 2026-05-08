@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -67,14 +68,16 @@ def screen_fundamentals(ticker: str, sector_medians: dict = None,
         return None
 
 
-def batch_screen(tickers: List[str]) -> List[Part1Result]:
+def batch_screen(tickers: List[str], max_workers: int = 15) -> List[Part1Result]:
     """
     Screen a batch of tickers. Returns only passing candidates sorted by quality_score.
     Pre-computes sector medians for relative quality comparison (C2 fix).
+    
+    Uses ThreadPoolExecutor for parallel yfinance I/O — scales to 2000+ stocks.
     """
     results = []
     total = len(tickers)
-    logger.info(f"Part 1: Screening {total} stocks for fundamental quality...")
+    logger.info(f"Part 1: Screening {total} stocks for fundamental quality (workers={max_workers})...")
 
     # Pre-compute sector medians for relative comparison (fix: previously dead code)
     sector_medians = None
@@ -86,20 +89,29 @@ def batch_screen(tickers: List[str]) -> List[Part1Result]:
     except Exception as e:
         logger.warning(f"  Sector median computation failed ({e}), using absolute thresholds")
 
-    for i, ticker in enumerate(tickers):
-        if (i + 1) % 50 == 0:
-            logger.info(f"  Part 1 progress: {i+1}/{total} ({len(results)} passed)")
-        try:
-            result = screen_fundamentals(ticker, sector_medians)
-            if result:
-                results.append(result)
-        except Exception:
-            pass
-        time.sleep(0.15)  # Rate limit
+    # Parallel screen via ThreadPoolExecutor (I/O-bound: yfinance HTTP calls)
+    completed = 0
+    batch_start = time.time()
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(screen_fundamentals, t, sector_medians): t for t in tickers}
+        for future in as_completed(futures):
+            completed += 1
+            if completed % 100 == 0 or completed == total:
+                elapsed = time.time() - batch_start
+                rate = completed / elapsed if elapsed > 0 else 0
+                logger.info(f"  Part 1 progress: {completed}/{total} "
+                            f"({len(results)} passed, {rate:.0f} stocks/s)")
+            try:
+                result = future.result(timeout=45)
+                if result:
+                    results.append(result)
+            except Exception:
+                pass
 
+    elapsed = time.time() - batch_start
     results.sort(key=lambda r: r.quality_score, reverse=True)
     logger.info(f"Part 1 complete: {len(results)}/{total} passed quality screening "
-                f"({len(results)/max(total,1)*100:.1f}%)")
+                f"({len(results)/max(total,1)*100:.1f}%) in {elapsed:.0f}s")
     return results
 
 

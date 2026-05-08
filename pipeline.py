@@ -19,6 +19,7 @@ Usage:
   python3 pipeline.py --full-scan               # Both stages
   python3 pipeline.py --full-scan --dry-run     # Full scan, no execution
   python3 pipeline.py --full-scan --live        # Full scan + LIVE execution
+  python3 pipeline.py --full-scan --source combined  # S&P500+R2K+NASDAQ100
   python3 pipeline.py --status                  # Portfolio + risk dashboard
   python3 pipeline.py --tickers AAPL,MSFT,...   # Scan specific tickers
 """
@@ -65,14 +66,14 @@ def get_ticker_universe(source: str = "sp500",
                         custom: Optional[List[str]] = None) -> List[str]:
     """
     Get stock universe for scanning.
-    Sources: sp500, russell2000, custom
+    Sources: sp500, russell2000, nasdaq100, combined, custom
     """
     if custom and len(custom) > 0:
         return [t.strip().upper() for t in custom if t.strip()]
 
     import pandas as pd
 
-    if source == "sp500":
+    def _fetch_sp500():
         try:
             import requests, io
             url = 'https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv'
@@ -83,16 +84,93 @@ def get_ticker_universe(source: str = "sp500",
                 logger.info(f"Loaded {len(symbols)} S&P 500 tickers from GitHub")
                 return symbols
         except Exception as e:
-            logger.warning(f"Could not fetch S&P 500 list: {e}, using fallback")
+            logger.warning(f"Could not fetch S&P 500 list: {e}")
+            return []
+
+    def _fetch_russell2000():
+        """Fetch Russell 2000 constituents from iShares IWM ETF holdings CSV."""
+        try:
+            import requests, csv, io as csvi
+            url = "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/1467271812596.ajax?fileType=csv&fileName=IWM"
+            headers_w = {
+                "User-Agent": "Mozilla/5.0 (X11; Linux arm64) AppleWebKit/537.36",
+                "Accept": "text/csv"
+            }
+            resp = requests.get(url, headers=headers_w, timeout=20)
+            resp.raise_for_status()
+            text = resp.text
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            # Find header row
+            start_idx = 0
+            for i, line in enumerate(lines):
+                if 'Ticker' in line and ('Name' in line or 'Market Value' in line):
+                    start_idx = i
+                    break
+            data_section = '\n'.join(lines[start_idx:])
+            reader = csv.reader(csvi.StringIO(data_section))
+            tickers = []
+            header = next(reader, None)
+            if header:
+                ticker_col = next((i for i, col in enumerate(header) if col and 'Ticker' in col), 0)
+                for row in reader:
+                    if not row or len(row) <= ticker_col:
+                        continue
+                    ticker = row[ticker_col].strip()
+                    if (not ticker or ticker == '-' or len(ticker) < 2 or
+                        ticker.startswith('The content') or
+                        ticker.startswith('©') or
+                        ticker.startswith('Holdings subject') or
+                        'BlackRock' in ticker):
+                        break
+                    ticker = ticker.replace('.', '-')
+                    tickers.append(ticker)
+            tickers = sorted(set(tickers))
+            logger.info(f"Loaded {len(tickers)} Russell 2000 tickers from iShares IWM")
+            return tickers
+        except Exception as e:
+            logger.warning(f"Could not fetch Russell 2000: {e}")
+            return []
+
+    def _fetch_nasdaq100():
+        """Fetch NASDAQ-100 constituents from Wikipedia."""
+        try:
+            import requests, io as ioi
+            headers_w = {'User-Agent': 'Mozilla/5.0 (X11; Linux arm64) AppleWebKit/537.36'}
+            resp = requests.get('https://en.wikipedia.org/wiki/Nasdaq-100', headers=headers_w, timeout=15)
+            tables = pd.read_html(ioi.StringIO(resp.text))
+            # Table[5] = constituents: Ticker, Company, ICB Industry, ICB Subsector
+            df = tables[5]
+            tickers = df.iloc[:, 0].str.replace('.', '-', regex=False).tolist()
+            tickers = [t.strip().upper() for t in tickers if str(t).strip()]
+            logger.info(f"Loaded {len(tickers)} NASDAQ 100 tickers from Wikipedia")
+            return tickers
+        except Exception as e:
+            logger.warning(f"Could not fetch NASDAQ 100: {e}")
+            return []
+
+    if source == "sp500":
+        result = _fetch_sp500()
+        if result:
+            return result
 
     if source == "russell2000":
-        try:
-            table = pd.read_html(
-                'https://en.wikipedia.org/wiki/Russell_2000_Index'
-            )[1]  # Usually the second table
-            return table.iloc[:, 0].tolist()[:500]  # Take top components
-        except Exception:
-            logger.warning("Could not fetch Russell 2000, using fallback")
+        result = _fetch_russell2000()
+        if result:
+            return result
+
+    if source == "nasdaq100":
+        result = _fetch_nasdaq100()
+        if result:
+            return result
+
+    if source == "combined":
+        sp500 = set(_fetch_sp500())
+        r2k = set(_fetch_russell2000())
+        nasdaq = set(_fetch_nasdaq100())
+        combined = list(sp500 | r2k | nasdaq)
+        combined = [t.strip().upper() for t in combined if t.strip()]
+        logger.info(f"Combined universe: {len(sp500)} S&P500 + {len(r2k)} R2K + {len(nasdaq)} NASDAQ100 = {len(combined)} unique tickers")
+        return combined
 
     # Fallback: curated list of 200 liquid tickers
     return [
@@ -167,7 +245,7 @@ def load_quality_pool(path: str = "output/quality_pool.json") -> List:
 # Main Pipeline Runner
 # ═══════════════════════════════════════════════════════════════════
 
-def run_stage1(tickers: List[str]) -> List:
+def run_stage1(tickers: List[str], workers: int = 15) -> List:
     """
     Stage 1: Core Financial Fundamentals Screening.
     Returns quality pool (list of Part1Result).
@@ -175,12 +253,12 @@ def run_stage1(tickers: List[str]) -> List:
     logger.info("=" * 60)
     logger.info("STAGE 1: Core Financial Fundamentals")
     logger.info("=" * 60)
-    logger.info(f"Universe: {len(tickers)} stocks")
+    logger.info(f"Universe: {len(tickers)} stocks (workers={workers})")
     logger.info(f"Criteria: Cap($250M/$10B) | B/M≥{P1C.min_bm_ratio} | "
                 f"FCF/Y≥{P1C.min_fcf_yield:.0%} | PTL≤{P1C.max_ptl_ratio}x | "
                 f"ΔAssets<ΔEarnings | FCF/NI≥{P1C.min_fcf_conversion:.0%}")
 
-    quality_pool = part1_batch(tickers)
+    quality_pool = part1_batch(tickers, max_workers=workers)
 
     if quality_pool:
         # Print top 15
@@ -193,7 +271,7 @@ def run_stage1(tickers: List[str]) -> List:
     return quality_pool
 
 
-def run_stage2(quality_pool: List[Part1Result]) -> tuple:
+def run_stage2(quality_pool: List[Part1Result], workers: int = 12) -> tuple:
     """
     Stage 2: MAGNA 53/10 Momentum Screening on quality pool.
     Receives Part1Result objects directly from Stage 1.
@@ -203,12 +281,12 @@ def run_stage2(quality_pool: List[Part1Result]) -> tuple:
     logger.info("\n" + "=" * 60)
     logger.info("STAGE 2: MAGNA 53/10 Momentum Signals")
     logger.info("=" * 60)
-    logger.info(f"Quality pool: {len(quality_pool)} stocks")
+    logger.info(f"Quality pool: {len(quality_pool)} stocks (workers={workers})")
     logger.info(f"MAGNA: M(EPS↑) | A(Sales↑) | G(Gap>4%) | N(Base) | "
                 f"5(SI) | 3(Analyst) | Cap<$10B | IPO≤10yr")
 
     # Run Part 2 MAGNA using Part1Result objects directly (no re-fetch)
-    signals = part2_batch(quality_pool)
+    signals = part2_batch(quality_pool, max_workers=workers)
 
     # Combine into candidates
     p1_map = {p.ticker: p for p in quality_pool}
@@ -526,6 +604,7 @@ def run_full_pipeline(
     dry_run: bool = True,
     tickers: Optional[List[str]] = None,
     source: str = "sp500",
+    workers: int = 15,
 ) -> Dict[str, Any]:
     """
     Run complete VMAA 2.0 two-stage pipeline:
@@ -550,7 +629,7 @@ def run_full_pipeline(
     logger.info(f"\n[Universe] {len(universe)} stocks from '{source}'")
 
     # ── Stage 1: Part 1 Fundamentals ──
-    quality_pool = run_stage1(universe)
+    quality_pool = run_stage1(universe, workers=workers)
 
     if not quality_pool:
         logger.info("\n⚠️ No stocks passed Part 1 quality screening.")
@@ -566,7 +645,8 @@ def run_full_pipeline(
     save_quality_pool(quality_pool)
 
     # ── Stage 2: Part 2 MAGNA ──
-    _, signals, candidates = run_stage2(quality_pool)
+    part2_workers = max(8, workers - 3)  # slightly fewer for Part 2
+    _, signals, candidates = run_stage2(quality_pool, workers=part2_workers)
 
     # ── Stage 2.5: VCP Precision Filter ──
     candidates = run_vcp_filter(candidates)
@@ -754,7 +834,9 @@ if __name__ == '__main__':
     parser.add_argument('--tickers', nargs='*',
                         help='Specific tickers (comma or space separated)')
     parser.add_argument('--source', default='sp500',
-                        help='Universe source: sp500, russell2000, custom')
+                        help='Universe source: sp500, russell2000, nasdaq100, combined, custom')
+    parser.add_argument('--workers', type=int, default=15,
+                        help='Parallel workers for yfinance I/O (default: 15)')
     parser.add_argument('--output', default='output/pipeline_result.json',
                         help='Output file path')
 
@@ -783,7 +865,7 @@ if __name__ == '__main__':
     elif args.scan_part1:
         print("Stage 1: Core Financial Fundamentals Screening")
         universe = get_ticker_universe(source=args.source, custom=tickers)
-        quality_pool = run_stage1(universe)
+        quality_pool = run_stage1(universe, workers=args.workers)
         save_quality_pool(quality_pool)
         print(f"\n✅ Part 1 complete: {len(quality_pool)} stocks passed quality screening")
 
@@ -808,7 +890,7 @@ if __name__ == '__main__':
                     pass
             print(f"  {len(part1_results)}/{len(pool_tickers)} still pass Part 1")
 
-            quality_pool, signals, candidates = run_stage2(part1_results)
+            quality_pool, signals, candidates = run_stage2(part1_results, workers=args.workers)
 
             # Stage 2.5: VCP Filter
             candidates = run_vcp_filter(candidates)
@@ -844,6 +926,7 @@ if __name__ == '__main__':
             dry_run=not args.live,
             tickers=tickers,
             source=args.source,
+            workers=args.workers,
         )
     else:
         parser.print_help()

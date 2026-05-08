@@ -104,16 +104,16 @@ class BacktestConfig:
     min_position_size: float = 500.0
 
     # ── Stop Loss / Take Profit ──
-    # WIDE_STOP strategy (backtest winner 2026-05-07)
-    atr_stop_multiplier: float = 3.0
-    hard_stop_pct: float = 0.25              # Wide stop — allows mean-reversion
-    trailing_stop_pct: float = 0.12
-    trailing_activate_after: float = 0.18    # Activate trailing after 18% gain
-    time_stop_days: int = 9999               # No time limit — let trades fully play out
-    # Take profit: full exit at TP1 (the #1 improvement — partial fills were destroying returns)
-    tp_levels: List[float] = field(default_factory=lambda: [0.15, 0.25, 0.40])
+    # FIXED R:R v3.2: risk 15%→make 20%, breakeven WR=42.9%
+    # Trailing stop DISABLED (was killing 6/10 wins before TP1)
+    atr_stop_multiplier: float = 2.0
+    hard_stop_pct: float = 0.15              # 15% hard stop — FIXED from 25%
+    trailing_stop_pct: float = 0.12           # Base 12% — overridden per-stock by _compute_per_stock_trail()
+    trailing_activate_after: float = 0.15
+    time_stop_days: int = 9999
+    # Take profit: full exit at TP1 (the #1 improvement)
+    tp_levels: List[float] = field(default_factory=lambda: [0.20, 0.30, 0.50])
     tp_sell_fractions: List[float] = field(default_factory=lambda: [1.0, 1.0, 1.0])
-    # TP1: sell 100% at +15% | TP2: 100% at +25% | TP3: 100% at +40%
 
     # ── Sector Rotation ──
     sector_momentum_enabled: bool = True
