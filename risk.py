@@ -32,51 +32,61 @@ logger = logging.getLogger("vmaa.risk")
 
 def get_market_regime() -> MarketRegime:
     """Assess overall market conditions for sizing and risk calibration."""
-    try:
-        spy = yf.Ticker("SPY")
-        hist = spy.history(period="3mo")
-        info = spy.info
+    import time as _time
+    for attempt in range(3):
+        try:
+            spy = yf.Ticker("SPY")
+            hist = spy.history(period="3mo")
+            if hist is None or len(hist) < 20:
+                raise ValueError("Insufficient data")
+            info = spy.info
 
-        current = float(hist['Close'].iloc[-1]) if len(hist) > 0 else 0
-        ma50 = float(hist['Close'].rolling(50).mean().iloc[-1]) if len(hist) >= 50 else 0
-        above_ma = current > ma50 if ma50 > 0 else True
+            current = float(hist['Close'].iloc[-1]) if len(hist) > 0 else 0
+            ma50 = float(hist['Close'].rolling(50).mean().iloc[-1]) if len(hist) >= 50 else 0
+            above_ma = current > ma50 if ma50 > 0 else True
 
-        returns = hist['Close'].pct_change().dropna()
-        vol_20d = float(returns.tail(20).std() * np.sqrt(252)) if len(returns) >= 20 else 0.15
+            returns = hist['Close'].pct_change().dropna()
+            vol_20d = float(returns.tail(20).std() * np.sqrt(252)) if len(returns) >= 20 else 0.15
 
-        if vol_20d < 0.12:
-            vol_regime = "LOW"
-            scalar = 1.0
-        elif vol_20d < 0.22:
-            vol_regime = "NORMAL"
-            scalar = 0.80
-        else:
-            vol_regime = "HIGH"
-            scalar = 0.50
+            if vol_20d < 0.12:
+                vol_regime = "LOW"
+                scalar = 1.0
+            elif vol_20d < 0.22:
+                vol_regime = "NORMAL"
+                scalar = 0.80
+            else:
+                vol_regime = "HIGH"
+                scalar = 0.50
 
-        high_3mo = float(hist['High'].max())
-        dd_from_high = (current - high_3mo) / high_3mo if high_3mo > 0 else 0
-        market_ok = above_ma and (dd_from_high > -0.12)
+            high_3mo = float(hist['High'].max())
+            dd_from_high = (current - high_3mo) / high_3mo if high_3mo > 0 else 0
+            market_ok = above_ma and (dd_from_high > -0.12)
 
-        return MarketRegime(
-            spy_price=round(current, 2),
-            spy_ma50=round(ma50, 2),
-            above_ma50=above_ma,
-            volatility_20d=round(vol_20d, 4),
-            vol_regime=vol_regime,
-            dd_from_3mo_high=round(dd_from_high, 4),
-            market_ok=market_ok,
-            position_scalar=scalar,
-            vix_proxy=vol_20d,
-        )
-    except Exception as e:
-        logger.warning(f"Market regime check failed: {e}")
-        return MarketRegime(
-            spy_price=0, spy_ma50=0, above_ma50=True,
-            volatility_20d=0.15, vol_regime="UNKNOWN",
-            dd_from_3mo_high=0, market_ok=True,
-            position_scalar=0.75,
-        )
+            return MarketRegime(
+                spy_price=round(current, 2),
+                spy_ma50=round(ma50, 2),
+                above_ma50=above_ma,
+                volatility_20d=round(vol_20d, 4),
+                vol_regime=vol_regime,
+                dd_from_3mo_high=round(dd_from_high, 4),
+                market_ok=market_ok,
+                position_scalar=scalar,
+                vix_proxy=vol_20d,
+            )
+        except Exception as e:
+            if attempt < 2:
+                wait = (attempt + 1) * 2
+                logger.warning(f"Market regime check attempt {attempt+1} failed ({e}), retrying in {wait}s")
+                _time.sleep(wait)
+            else:
+                logger.warning(f"Market regime check failed after 3 attempts: {e}")
+
+    return MarketRegime(
+        spy_price=0, spy_ma50=0, above_ma50=True,
+        volatility_20d=0.15, vol_regime="UNKNOWN",
+        dd_from_3mo_high=0, market_ok=True,
+        position_scalar=0.75,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -402,7 +412,7 @@ def generate_trade_decision(
         risk_flags.append("Market below 50MA or deep drawdown")
     if p1.interest_rate_sensitive:
         risk_flags.append("IR_sensitive")
-    if p1.debt_to_equity > 100:
+    if p1.debt_to_equity > 100 and p1.debt_to_equity < 9999:
         risk_flags.append(f"High_D/E={p1.debt_to_equity:.0f}")
     if confidence < 0.40:
         risk_flags.append("Low_confidence")
@@ -421,6 +431,8 @@ def generate_trade_decision(
     # ── Decision ──
     if quantity <= 0 or confidence < 0.30:
         action = 'HOLD'
+        if candidate.sentiment is not None and candidate.sentiment.composite_score < -0.20:
+            risk_flags.append("Sentiment_rejected")
     elif confidence >= 0.50 and p2.entry_ready:
         action = 'BUY'
     elif p2.entry_ready:

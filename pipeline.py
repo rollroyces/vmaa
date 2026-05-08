@@ -285,6 +285,7 @@ def run_risk_and_execute(
     decisions = []
     executed = []
     skipped = []
+    executed_count = 0
 
     for c in candidates:
         ticker = c.ticker
@@ -298,8 +299,8 @@ def run_risk_and_execute(
             skipped.append((ticker, f"Sector limit ({c.part1.sector})"))
             continue
 
-        # Position count check
-        if len(existing_positions) >= RiskCfg.max_positions:
+        # Position count check — track executed count independently
+        if executed_count >= RiskCfg.max_positions:
             skipped.append((ticker, "Max positions reached"))
             break
 
@@ -321,8 +322,9 @@ def run_risk_and_execute(
         # Execute
         if decision.action in ('BUY', 'BUY_WEAK'):
             result = _execute_decision(decision, broker, account, dry_run)
-            if result['executed']:
+            if result.get('executed') or result.get('would_execute'):
                 executed.append(decision)
+                executed_count += 1
                 existing_tickers.append(ticker)
             else:
                 skipped.append((ticker, result['reason']))

@@ -362,7 +362,14 @@ def _check_ir_sensitivity(info: dict) -> Tuple[bool, float, float]:
     High debt/equity, high beta, or IR-sensitive sectors.
     Returns: (is_sensitive, debt_to_equity, beta)
     """
-    debt_to_equity = info.get('debtToEquity', 0) or 0
+    de = info.get('debtToEquity', 0) or 0
+    # Check for negative equity (meaningless D/E ratio)
+    total_equity = info.get('totalEquity') or info.get('bookValue', 0) or 0
+    if isinstance(total_equity, (int, float)) and total_equity <= 0:
+        de = 9999  # Sentinel for "negative equity — D/E meaningless"
+    elif de > 1000:
+        de = 1000  # Cap at 1000x
+    debt_to_equity = de
     beta = info.get('beta', 1.0) or 1.0
     sector = info.get('sector', '')
 

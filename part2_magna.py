@@ -252,14 +252,18 @@ def _check_gap_up(hist: pd.DataFrame, info: dict) -> Tuple[bool, bool, float, in
         gap_day_volume = best_gap_day_volume
         # Check if best gap day volume ≥ multiplier × 20-day average
         vol_window = recent['Volume'].iloc[max(0, best_gap_idx - 20):best_gap_idx]
-        if len(vol_window) >= 10:
+        if len(vol_window) >= 5:
             avg_vol_20d = float(vol_window.mean())
             if avg_vol_20d > 0:
                 volume_confirmed = gap_day_volume >= avg_vol_20d * P2C.gap_volume_multiplier
+        elif gap_day_volume > 0:
+            avg_vol = info.get('averageVolume', 0) or 0
+            if avg_vol > 0:
+                volume_confirmed = gap_day_volume >= avg_vol * P2C.gap_volume_multiplier
         else:
             # Not enough volume history — flag but don't block gap signal
             logger.warning(f"  Gap up detected but only {len(vol_window)} bars of volume "
-                          f"history (need ≥10) — volume confirmation skipped")
+                          f"history (need ≥5) — volume confirmation skipped")
 
     return gap_detected, volume_confirmed, round(gap_pct, 4), gap_day_volume
 

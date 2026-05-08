@@ -964,66 +964,11 @@ class BacktestEngine:
         else:
             entry_price = entry_price * (1 + self.config.entry_slippage_pct)
 
-        # Position sizing (Quarter-Kelly)
-        confidence = compute_confidence(candidate, self._market_regime)
-        # Risk per share: normal 25%, bear 37.5% (wider breathing room for volatility)
-        stop_pct = self.config.hard_stop_pct  # 25%
-        if self._is_bear_market:
-            stop_pct *= 1.5  # 37.5% — wider for bear volatility
-        risk_per_share = entry_price * stop_pct
-        # Base win probability 50% modulated by confidence (0.45 → 0.55 range)
-        win_prob = 0.45 + confidence * 0.10
-        payout = 2.0
-        kelly = (payout * win_prob - (1 - win_prob)) / payout
-        kelly = max(0, min(kelly, 0.25))
-
-        portfolio_value = self.portfolio.equity
-        # Adaptive Kelly: aggressive in bull, conservative in bear
-        market_ok = self._market_regime.market_ok if self._market_regime else True
-        vol_regime = self._market_regime.vol_regime if self._market_regime else "NORMAL"
-        if market_ok and vol_regime == "LOW" and not self._is_bear_market:
-            kelly_frac = self.config.kelly_fraction_bull
-        elif self._is_bear_market:
-            kelly_frac = self.config.bear_kelly_fraction
-        elif not market_ok:
-            kelly_frac = self.config.kelly_fraction_bear
-        else:
-            kelly_frac = self.config.kelly_fraction
-        risk_capital = portfolio_value * kelly * kelly_frac * scalar
-
-        raw_qty = int(risk_capital / risk_per_share) if risk_per_share > 0 else 0
-
-        # Allocation-based limit
-        max_alloc = portfolio_value * self.config.max_position_pct
-        alloc_qty = int(max_alloc / entry_price) if entry_price > 0 else 0
-
-        quantity = min(raw_qty, alloc_qty)
-        if quantity <= 0:
-            return
-
-        # Min position size check
-        position_value = quantity * entry_price
-        if position_value < self.config.min_position_size:
-            return
-
-        # Transaction cost
-        hist = self._daily_prices.get(ticker)
-        daily_vol = int(hist.loc[hist.index <= pd.Timestamp(date_str)]['Volume'].iloc[-1]) \
-            if hist is not None else 0
-        cost = self.cost_model.total_cost(entry_price, quantity, daily_vol)
-
-        if self.portfolio.cash < position_value + cost:
-            # Can't afford
-            return
-
-        # Execute
-        self.portfolio.cash -= (position_value + cost)
-
         # Compute stops using ADAPTIVE selection (matching live risk_adaptive.py)
         # Phase 1 (2026-05-06): Dynamically adjusts for price level, vol, regime
+        # Moved BEFORE sizing — stop_loss feeds Fixed Fractional sizing below
         from risk_adaptive import compute_stops_adaptive
         
-        # Build a mini hist-like DataFrame for the date
         mini_hist = self._daily_prices.get(ticker, pd.DataFrame())
         if not mini_hist.empty:
             mini_hist = mini_hist[mini_hist.index <= pd.Timestamp(date_str)].copy()
@@ -1037,6 +982,31 @@ class BacktestEngine:
             stop_distance = entry_price - stop_loss
             stop_loss = max(0.01, entry_price - (stop_distance * 1.5))
             stop_type += "_bear_wide"
+
+        # Position sizing — Fixed Fractional (unified with live risk.py)
+        from risk import compute_position_size as live_sizing
+        confidence = compute_confidence(candidate, self._market_regime)
+        quantity, position_pct, risk_capital = live_sizing(
+            ticker, entry_price, stop_loss,
+            self.portfolio.equity, confidence, self._market_regime
+        )
+
+        if quantity <= 0:
+            return
+
+        position_value = quantity * entry_price
+
+        # Transaction cost
+        hist = self._daily_prices.get(ticker)
+        daily_vol = int(hist.loc[hist.index <= pd.Timestamp(date_str)]['Volume'].iloc[-1]) \
+            if hist is not None else 0
+        cost = self.cost_model.total_cost(entry_price, quantity, daily_vol)
+
+        if self.portfolio.cash < position_value + cost:
+            return
+
+        # Execute
+        self.portfolio.cash -= (position_value + cost)
 
         # Take profits
         tps = []
