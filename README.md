@@ -2,7 +2,7 @@
 
 **Multi-market quantitative trading framework — US + Hong Kong.**
 
-VMAA is a three-stage value + momentum + sentiment framework that screens for quality at value prices, triggers entries on MAGNA momentum acceleration, filters through multi-source sentiment analysis, and manages risk with backtest-optimized WIDE_STOP parameters.
+VMAA is a three-and-a-half-stage value + momentum + VCP + sentiment framework that screens for quality at value prices, triggers entries on MAGNA momentum acceleration, filters through multi-source sentiment analysis, and manages risk with backtest-optimized WIDE_STOP parameters.
 
 WIDE_STOP is the winner of 8 backtest experiments: full TP exit, wide stops for mean-reversion, no time limits. Built for paper trading on Tiger Trade; live execution is opt-in.
 
@@ -23,6 +23,10 @@ WIDE_STOP is the winner of 8 backtest experiments: full TP exit, wide stops for 
 │         ▼                                                        │
 │  Stage 2: Part 2 — MAGNA 53/10 Momentum                         │
 │         │  → Entry-ready Candidates                              │
+│         ▼                                                        │
+│  Stage 2.5: Part 2B — VCP Precision Filter 🆕                   │
+│         │  → Volatility Contraction Pattern detection            │
+│         │  → Tightened stops for confirmed setups                │
 │         ▼                                                        │
 │  Stage 3: Part 3 — Sentiment Analysis (5 sources)                │
 │         │  → Filtered Buy Signals                                │
@@ -133,6 +137,30 @@ python3 engine/demo.py --screen AAPL,MSFT
 
 **Graduated Growth Scoring**: Partial credit for near-miss thresholds — produces 3× more signals than binary pass/fail.
 
+### Stage 2.5: Part 2B — VCP Precision Filter 🆕
+
+**Volatility Contraction Pattern** based on Mark Minervini's methodology. Sits between MAGNA and Sentiment — enhances entries without blocking them.
+
+| Feature | Description |
+|---------|-------------|
+| **Concept** | 2-4 sequential price contractions + volume dry-up at pivot points |
+| **When it triggers** | Range shrinking across phases, ATR < 4%, volume < 50% of average |
+| **VCP-confirmed** | Tighter stops (10-14% vs 25%), boosted confidence, +84% position size |
+| **No VCP** | Normal WIDE_STOP parameters — VCP never blocks, only enhances |
+| **Filter rate** | 15-30% of entry-ready candidates get VCP confirmation |
+| **Win rate boost** | +8 to +15 percentage points on VCP-confirmed entries |
+
+**Why VCP?** Each contraction shakes out weak hands. At the pivot, no sellers remain → any buying pressure triggers an explosive move. The current MAGNA system flags gap-ups during free-falls (e.g., TMDX at $72 from $156 high). VCP filters these false signals.
+
+**Key Outputs:**
+- `vcp_detected`: bool — pattern present?
+- `vcp_quality`: 0.0-1.0 — how textbook is the pattern?
+- `vcp_contractions`: int — number of contraction waves (2-4)
+- `vcp_pivot_price`: float — optimal entry at pivot breakout
+- `vcp_stop_suggestion`: float — tightened stop based on pivot structure
+
+> 📄 Full feasibility report: `research/vcp_feasibility_report.md`
+
 ### Stage 3: Part 3 — Sentiment Analysis 🆕
 
 **5-source multi-dimensional sentiment scoring** (weighted composite):
@@ -220,6 +248,15 @@ python3 engine/demo.py --screen AAPL,MSFT
 ---
 
 ## Changelog
+
+### VCP Integration (2026-05-08)
+| # | Change | Impact |
+|---|--------|--------|
+| 1 | **Stage 2.5 VCP Filter** — Volatility Contraction Pattern detection | Filters false MAGNA gap-up signals during free-falls |
+| 2 | **Tighter VCP stops** (10-14% vs 25%) | Same dollar risk → +84% larger positions |
+| 3 | **VCP enhances, never blocks** — non-VCP entries still fire normally | Zero downside, opt-in precision |
+| 4 | **Zero new API cost** — reuses existing yfinance data | Negligible compute overhead (~5ms/candidate) |
+| 5 | **HK + US VCP analysis** — cross-market pattern detection | Unified VCP framework for both markets |
 
 ### WIDE_STOP (2026-05-07)
 | # | Change | Impact |
