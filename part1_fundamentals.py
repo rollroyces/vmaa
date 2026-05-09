@@ -30,6 +30,13 @@ import yfinance as yf
 
 from config import P1C
 from models import Part1Result
+try:
+    from data.cache import cache_get as _cache_get, cache_set as _cache_set
+    _CACHE_AVAILABLE = True
+except ImportError:
+    _CACHE_AVAILABLE = False
+    _cache_get = None
+    _cache_set = None
 
 logger = logging.getLogger("vmaa.part1")
 
@@ -94,13 +101,60 @@ def screen_fundamentals(ticker: str, sector_medians: dict = None,
                                         break
                     except Exception:
                         pass
-                # Populate essential fields from bars (average volume, price metadata)
+                # Populate essential fields from bars (price + volume)
                 if bars is not None and len(bars) >= 1:
+                    close_col = 'Close' if 'Close' in bars.columns else 'close'
                     vol_col = 'Volume' if 'Volume' in bars.columns else 'volume'
-                    if len(bars) >= 20:
-                        info['averageVolume'] = int(bars[vol_col].tail(20).mean())
-                    else:
-                        info['averageVolume'] = int(bars[vol_col].mean())
+                    if close_col in bars.columns:
+                        latest_price = float(bars[close_col].iloc[-1])
+                        info['regularMarketPrice'] = latest_price
+                        info['currentPrice'] = latest_price
+                        info['previousClose'] = latest_price
+                    if vol_col in bars.columns:
+                        if len(bars) >= 20:
+                            info['averageVolume'] = int(bars[vol_col].tail(20).mean())
+                        else:
+                            info['averageVolume'] = int(bars[vol_col].mean())
+                
+                # If bars unavailable, get price from Tiger delay quotes (not rate limited)
+                if 'regularMarketPrice' not in info:
+                    try:
+                        from data.hybrid import get_price as _get_price
+                        p, v, s, d = _get_price(ticker)
+                        if p > 0:
+                            info['regularMarketPrice'] = p
+                            info['currentPrice'] = p
+                            info['previousClose'] = p
+                        if v > 0:
+                            info['averageVolume'] = v
+                    except Exception:
+                        pass
+                
+                # Supplement with analyst data from Finnhub recommendations
+                try:
+                    from data.hybrid import get_finnhub_recommendation
+                    recs = get_finnhub_recommendation(ticker)
+                    if recs and len(recs) > 0:
+                        latest = recs[0]
+                        analyst_count = latest.get('buy',0) + latest.get('hold',0) + latest.get('sell',0)
+                        analyst_count += latest.get('strongBuy',0) + latest.get('strongSell',0)
+                        if analyst_count > 0:
+                            info['numberOfAnalystOpinions'] = analyst_count
+                            buy_w = latest.get('strongBuy',0) + latest.get('buy',0)
+                            sell_w = latest.get('strongSell',0) + latest.get('sell',0)
+                            if buy_w > sell_w:
+                                info['recommendationKey'] = 'buy'
+                            elif buy_w < sell_w:
+                                info['recommendationKey'] = 'sell'
+                            else:
+                                info['recommendationKey'] = 'hold'
+                except Exception:
+                    pass
+                
+                # Update cache with enriched data (now has price + analyst info)
+                if _CACHE_AVAILABLE and fund:
+                    _cache_set(ticker, 'fundamentals', info)
+                
                 hist = bars
                 if not yf_ok or t is None:
                     t = yf.Ticker(ticker)

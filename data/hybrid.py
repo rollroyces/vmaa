@@ -793,27 +793,39 @@ def get_finnhub_fundamentals(ticker: str) -> dict:
             if metrics:
                 # Map Finnhub field names to yfinance-compatible names
                 # Actual Finnhub metric field names (verified 2026-05-08)
+                # All entries as (field_name, is_percentage) tuples
                 mapping = {
-                    'marketCapitalization': 'marketCap',
-                    'bookValuePerShareAnnual': 'bookValue',
-                    'epsTTM': 'trailingEps',
-                    'revenuePerShareTTM': 'revenuePerShare',
-                    'beta': 'beta',
-                    'roaTTM': 'returnOnAssets',
-                    'roeTTM': 'returnOnEquity',
-                    'ebitdPerShareTTM': 'ebitda',
-                    'totalDebt/totalEquityAnnual': 'debtToEquity',
-                    '52WeekHigh': 'fiftyTwoWeekHigh',
-                    '52WeekLow': 'fiftyTwoWeekLow',
-                    'dividendYieldIndicatedAnnual': 'dividendYield',
-                    'epsBasicExclExtraItemsTTM': 'trailingEps',  # alt EPS source
+                    'marketCapitalization': ('marketCap', False),
+                    'bookValuePerShareAnnual': ('bookValue', False),
+                    'epsTTM': ('trailingEps', False),
+                    'revenuePerShareTTM': ('revenuePerShare', False),
+                    'beta': ('beta', False),
+                    'roaTTM': ('returnOnAssets', True),       # percentage, auto-/100
+                    'roeTTM': ('returnOnEquity', True),        # percentage, auto-/100
+                    'ebitdPerShareTTM': ('ebitda', False),
+                    'totalDebt/totalEquityAnnual': ('debtToEquity', False),
+                    '52WeekHigh': ('fiftyTwoWeekHigh', False),
+                    '52WeekLow': ('fiftyTwoWeekLow', False),
+                    'dividendYieldIndicatedAnnual': ('dividendYield', True),
+                    'epsBasicExclExtraItemsTTM': ('trailingEps', False),
+                    'cashFlowPerShareTTM': ('cashFlowPerShare', False),
+                    'revenueGrowthTTMYoy': ('revenueGrowth', True),
+                    'epsGrowthTTMYoy': ('earningsGrowth', True),
+                    'operatingMarginTTM': ('operatingMargins', True),
+                    'grossMarginTTM': ('grossMargins', True),
+                    'netProfitMarginTTM': ('profitMargins', True),
+                    'currentRatioQuarterly': ('currentRatio', False),
                 }
-                for fin_key, yf_key in mapping.items():
+                for fin_key, (yf_key, is_pct) in mapping.items():
                     if fin_key in metrics and metrics[fin_key] is not None:
+                        val = metrics[fin_key]
                         # Don't overwrite trailingEps from epsTTM with the backup source
                         if yf_key == 'trailingEps' and yf_key in result:
                             continue
-                        result[yf_key] = metrics[fin_key]
+                        if is_pct:
+                            result[yf_key] = val / 100.0
+                        else:
+                            result[yf_key] = val
                 
                 # Also fetch company profile for sector, name, shares outstanding
                 try:
@@ -826,21 +838,31 @@ def get_finnhub_fundamentals(ticker: str) -> dict:
                         if profile.get('finnhubIndustry'):
                             result['sector'] = profile['finnhubIndustry']
                         if profile.get('name'):
-                            result['shortName'] = profile['name']
+                            result['longName'] = profile['name']
                         if profile.get('shareOutstanding'):
                             result['sharesOutstanding'] = float(profile['shareOutstanding']) * 1e6  # Finnhub returns in millions
-                        # Note: marketCap already set from metrics above, don't double-set here
-                        # (profile marketCap is same scale, would cause double-multiplication)
                 except Exception:
                     pass
                 
-                # Estimate market cap if available (Finnhub returns in millions)
+                # Convert market cap from millions to actual dollars
                 if 'marketCap' in result:
                     result['marketCap'] = int(result['marketCap'] * 1e6)
                 
-                # Free cash flow: Finnhub doesn't provide per-share FCF directly.
-                # We can estimate from EV/FCF ratio if we have EV.
-                # For now, use yfinance-style composite from per-share EBITDA.
+                # If we have shares outstanding, calculate total free cash flow
+                # Note: bookValue stays as PER-SHARE (yfinance convention for B/M calc)
+                shares = result.get('sharesOutstanding', 0)
+                if shares > 0:
+                    # Total free cash flow = cashFlowPerShare * shares
+                    fcf_ps = result.get('cashFlowPerShare', 0)
+                    if fcf_ps > 0:
+                        result['freeCashflow'] = fcf_ps * shares
+                
+                # Calculate FCF yield = freeCashflow / marketCap
+                fcf = result.get('freeCashflow', 0)
+                mcap = result.get('marketCap', 0)
+                if fcf > 0 and mcap > 0:
+                    result['fcfYield'] = fcf / mcap
+                
                 result['_source'] = 'finnhub'
     except Exception as e:
         pass
