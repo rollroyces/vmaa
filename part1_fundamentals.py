@@ -101,35 +101,7 @@ def screen_fundamentals(ticker: str, sector_medians: dict = None,
                                         break
                     except Exception:
                         pass
-                # Populate essential fields from bars (price + volume)
-                if bars is not None and len(bars) >= 1:
-                    close_col = 'Close' if 'Close' in bars.columns else 'close'
-                    vol_col = 'Volume' if 'Volume' in bars.columns else 'volume'
-                    if close_col in bars.columns:
-                        latest_price = float(bars[close_col].iloc[-1])
-                        info['regularMarketPrice'] = latest_price
-                        info['currentPrice'] = latest_price
-                        info['previousClose'] = latest_price
-                    if vol_col in bars.columns:
-                        if len(bars) >= 20:
-                            info['averageVolume'] = int(bars[vol_col].tail(20).mean())
-                        else:
-                            info['averageVolume'] = int(bars[vol_col].mean())
-                
-                # If bars unavailable, get price from Tiger delay quotes (not rate limited)
-                if 'regularMarketPrice' not in info:
-                    try:
-                        from data.hybrid import get_price as _get_price
-                        p, v, s, d = _get_price(ticker)
-                        if p > 0:
-                            info['regularMarketPrice'] = p
-                            info['currentPrice'] = p
-                            info['previousClose'] = p
-                        if v > 0:
-                            info['averageVolume'] = v
-                    except Exception:
-                        pass
-                
+
                 # Supplement with analyst data from Finnhub recommendations
                 try:
                     from data.hybrid import get_finnhub_recommendation
@@ -150,32 +122,71 @@ def screen_fundamentals(ticker: str, sector_medians: dict = None,
                                 info['recommendationKey'] = 'hold'
                 except Exception:
                     pass
-                
-                # Update cache with enriched data (now has price + analyst info)
-                if _CACHE_AVAILABLE and fund:
-                    _cache_set(ticker, 'fundamentals', info)
-                
-                hist = bars
+
                 if not yf_ok or t is None:
                     t = yf.Ticker(ticker)
                 used_fallback = True
                 logger.debug(f"  {ticker}: Using Finnhub fallback data")
             elif not fund or len(fund) < 3:
-                # Fallback to SEC EDGAR
-                if bars is not None and len(bars) >= 20:
-                    sec_fund = get_fundamentals_tiger(ticker)
-                    if sec_fund:
-                        info = _build_info_from_sec(ticker, sec_fund, bars)
-                        hist = bars
-                        if not yf_ok or t is None:
-                            t = yf.Ticker(ticker)
-                        used_fallback = True
-                        logger.debug(f"  {ticker}: Using Tiger/SEC fallback data")
-                    else:
-                        logger.debug(f"  {ticker}: No SEC fundamentals for fallback")
+                # Fallback to SEC EDGAR — bars are optional (Tiger 20-symbol limit)
+                sec_fund = get_fundamentals_tiger(ticker)
+                if sec_fund:
+                    info = _build_info_from_sec(ticker, sec_fund, bars)
+                    if not yf_ok or t is None:
+                        t = yf.Ticker(ticker)
+                    used_fallback = True
+                    logger.debug(f"  {ticker}: Using Tiger/SEC fallback data")
                 else:
-                    logger.debug(f"  {ticker}: Insufficient bar data ({len(bars) if bars is not None else 0} rows), skipping SEC")
-            
+                    logger.debug(f"  {ticker}: No SEC fundamentals for fallback")
+
+            # ── Unified price fallback (runs for ALL paths) ──
+            # Bars are limited to 20 symbols/day on Tiger. Always try bars first
+            # for price/volume/volatility, then fall back to Tiger delay briefs
+            # (NO per-day symbol limit) to ensure price is always available.
+            if 'regularMarketPrice' not in info or info.get('regularMarketPrice', 0) <= 0:
+                # Try bars first (nice-to-have for OHLCV history + volume)
+                if bars is not None and len(bars) >= 1:
+                    close_col = 'Close' if 'Close' in bars.columns else 'close'
+                    vol_col = 'Volume' if 'Volume' in bars.columns else 'volume'
+                    if close_col in bars.columns:
+                        latest_price = float(bars[close_col].iloc[-1])
+                        if latest_price > 0:
+                            info['regularMarketPrice'] = latest_price
+                            info['currentPrice'] = latest_price
+                            info['previousClose'] = latest_price
+                    if vol_col in bars.columns and info.get('averageVolume', 0) <= 0:
+                        if len(bars) >= 20:
+                            info['averageVolume'] = int(bars[vol_col].tail(20).mean())
+                        else:
+                            info['averageVolume'] = int(bars[vol_col].mean())
+
+                # If still no price, get from Tiger delay briefs (NO per-day limit)
+                if 'regularMarketPrice' not in info or info.get('regularMarketPrice', 0) <= 0:
+                    try:
+                        from data.hybrid import get_price as _get_price
+                        p, v, s, d = _get_price(ticker)
+                        if p > 0:
+                            info['regularMarketPrice'] = p
+                            info['currentPrice'] = p
+                            info['previousClose'] = p
+                        if v > 0 and info.get('averageVolume', 0) <= 0:
+                            info['averageVolume'] = v
+                    except Exception:
+                        pass
+
+            # Always update cache with enriched data (price + analyst stays permanent)
+            if _CACHE_AVAILABLE and fund and len(fund) > 3:
+                _cache_set(ticker, 'fundamentals', info)
+
+            # Use bars as hist when available (preferred for 52w range / volatility)
+            if bars is not None and len(bars) >= 1:
+                hist = bars
+
+            # Reject only if both bars AND Tiger delay briefs failed to provide price
+            if 'regularMarketPrice' not in info or info.get('regularMarketPrice', 0) <= 0:
+                logger.debug(f"  {ticker}: No price data from any source")
+                return None
+
             if not info and not used_fallback:
                 logger.debug(f"  {ticker}: No data from any source")
                 return None
@@ -240,11 +251,14 @@ def batch_screen(tickers: List[str], max_workers: int = 15) -> List[Part1Result]
 # Basic Pre-checks
 # ═══════════════════════════════════════════════════════════════════
 
-def _basic_checks(info: dict, hist: pd.DataFrame, ticker: str = None) -> bool:
-    """Fast-reject stocks that don't meet basic data requirements."""
-    if hist is None or len(hist) < 20:
-        return False
-
+def _basic_checks(info: dict, hist, ticker: str = None) -> bool:
+    """Fast-reject stocks that don't meet basic data requirements.
+    
+    When using fallback data (Tiger delay / Finnhub), hist may be short or
+    None because Tiger bars are limited to 20 symbols/day.  In that case we
+    only require a valid price and volume — bars are optional.
+    """
+    # Require a valid price above minimum (from any source, including Tiger delay)
     price = get_price_from_info(info, ticker)
     if price <= 0 or price < P1C.min_price:
         return False
@@ -253,6 +267,15 @@ def _basic_checks(info: dict, hist: pd.DataFrame, ticker: str = None) -> bool:
     if avg_vol < P1C.min_avg_volume:
         return False
 
+    # hist is optional when using fallback data (Tiger 20-symbol bar limit).
+    # A stock with price + volume from Tiger delay briefs passes basic checks
+    # even without OHLCV history.  Full history is still preferred but not
+    # required at this stage.
+    if hist is not None and len(hist) >= 1:
+        return True
+
+    # Accept stocks with valid price + volume even without hist
+    # (Tiger delay briefs or Finnhub provided these without bars)
     return True
 
 

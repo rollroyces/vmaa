@@ -1,19 +1,19 @@
 {
   "status": "complete",
-  "timestamp": "2026-05-09T00:38:09.263255",
-  "elapsed_seconds": 78.316128,
+  "timestamp": "2026-05-09T00:55:06.176085",
+  "elapsed_seconds": 81.340117,
   "market": {
-    "spy_price": 0,
+    "spy_price": 737.62,
     "above_ma50": true,
-    "vol_regime": "UNKNOWN",
-    "volatility_20d": 0.15,
+    "vol_regime": "LOW",
+    "volatility_20d": 0.1045,
     "market_ok": true,
-    "position_scalar": 0.75
+    "position_scalar": 1.0
   },
   "pipeline": {
     "universe_size": 503,
-    "part1_passed": 53,
-    "part1_pass_rate": "10.5%",
+    "part1_passed": 186,
+    "part1_pass_rate": "37.0%",
     "part2_signals": 0,
     "part2_entry_ready": 0,
     "candidates": 0,
@@ -23,44 +23,39 @@
   },
   "quality_pool_top20": [
     {
-      "ticker": "EXE",
-      "quality_score": 0.9721,
-      "rationale": "Q=97% | Cap=turnaround($9.1B) | B/M=1.00 | ROA=8.7% | FCF/Y=51.2% | PTL=1.06x | A<EG\u2713 | FCF/NI=1.9"
+      "ticker": "VRTX",
+      "quality_score": 0.9204,
+      "rationale": "Q=92% | Cap=large_cap($13.9B) | B/M=1.00 | ROA=16.1% | FCF/Y=28.8% | PTL=1.19x | A<EG\u2713 | FCF/NI=1.1"
     },
     {
-      "ticker": "CPRT",
-      "quality_score": 0.9268,
-      "rationale": "Q=93% | Cap=turnaround($2.5B) | B/M=1.00 | ROA=18.4% | FCF/Y=66.1% | PTL=1.05x | FCF/NI=1.3"
+      "ticker": "AOS",
+      "quality_score": 0.9131,
+      "rationale": "Q=91% | Cap=turnaround($8.1B) | B/M=0.23 | ROA=12.8% | FCF/Y=6.1% | PTL=1.01x | A<EG\u2713 | FCF/NI=0.9"
     },
     {
-      "ticker": "HIG",
-      "quality_score": 0.9037,
-      "rationale": "Q=90% | Cap=large_cap($15.3B) | B/M=1.00 | ROA=3.1% | FCF/Y=26.1% | PTL=1.12x | A<EG\u2713 | FCF/NI=1.6"
+      "ticker": "VLTO",
+      "quality_score": 0.89,
+      "rationale": "Q=89% | Cap=turnaround($2.0B) | B/M=1.00 | ROA=14.7% | FCF/Y=60.2% | PTL=1.02x | A\u2265EG\u2717 | FCF/NI=1.5"
     },
     {
-      "ticker": "CTAS",
-      "quality_score": 0.8961,
-      "rationale": "Q=90% | Cap=turnaround($3.3B) | B/M=1.00 | ROA=15.8% | FCF/Y=66.9% | PTL=1.01x | A\u2265EG\u2717 | FCF/NI=1.6"
+      "ticker": "BRO",
+      "quality_score": 0.8772,
+      "rationale": "Q=88% | Cap=large_cap($19.1B) | B/M=0.67 | ROA=5.5% | FCF/Y=8.0% | PTL=1.01x | A\u2265EG\u2717 | IR+ | FCF/NI=1.3"
     },
     {
-      "ticker": "ADSK",
-      "quality_score": 0.8891,
-      "rationale": "Q=89% | Cap=turnaround($1.1B) | B/M=1.00 | ROA=8.4% | FCF/Y=109.8% | PTL=1.14x | FCF/NI=1.4"
+      "ticker": "BR",
+      "quality_score": 0.8738,
+      "rationale": "Q=87% | Cap=large_cap($17.3B) | B/M=0.16 | ROA=9.2% | FCF/Y=6.9% | PTL=1.01x | A<EG\u2713 | IR+ | FCF/NI=1.1"
     },
     {
-      "ticker": "MSI",
-      "quality_score": 0.8694,
-      "rationale": "Q=87% | Cap=turnaround($1.7B) | B/M=1.00 | ROA=12.8% | FCF/Y=155.6% | PTL=1.07x | A\u2265EG\u2717 | FCF/NI=1.6"
+      "ticker": "PNR",
+      "quality_score": 0.8663,
+      "rationale": "Q=87% | Cap=large_cap($12.4B) | B/M=0.31 | ROA=8.9% | FCF/Y=4.6% | PTL=1.00x | FCF/NI=0.9"
     },
     {
-      "ticker": "MLM",
-      "quality_score": 0.8518,
-      "rationale": "Q=85% | Cap=turnaround($9.5B) | B/M=1.00 | ROA=6.4% | FCF/Y=19.5% | PTL=1.11x | A\u2265EG\u2717 | FCF/NI=1.6"
-    },
-    {
-      "ticker": "CSGP",
-      "quality_score": 0.8485,
-      "rationale": "Q=85% | Cap=turnaround($7.6B) | B/M=1.00 | ROA=4.0% | FCF/Y=5.2% | PTL=1.00x | A\u2265EG\u2717 | FCF/NI=1.0"
+      "ticker": "TRMB",
+      "quality_score": 0.8519,
+      "rationale": "Q=85% | Cap=turnaround($5.7B) | B/M=1.00 | ROA=3.3% | FCF/Y=12.2% | PTL=1.02x | A\u2265EG\u2717 | FCF/NI=2.0"
     },
     {
       "ticker": "VEEV",
@@ -68,59 +63,64 @@
       "rationale": "Q=85% | Cap=turnaround($3.7B) | B/M=1.00 | ROA=7.2% | FCF/Y=11.6% | PTL=1.12x | A\u2265EG\u2717 | FCF/NI=0.8"
     },
     {
-      "ticker": "TMUS",
-      "quality_score": 0.8448,
-      "rationale": "Q=84% | Cap=large_cap($69.7B) | B/M=1.00 | ROA=4.0% | FCF/Y=38.9% | PTL=1.07x | A\u2265EG\u2717 | FCF/NI=2.0"
+      "ticker": "ADBE",
+      "quality_score": 0.8362,
+      "rationale": "Q=84% | Cap=large_cap($102.3B) | B/M=0.11 | ROA=18.9% | FCF/Y=9.1% | PTL=1.13x | A<EG\u2713 | IR+ | FCF/NI=1.3"
     },
     {
-      "ticker": "SPGI",
-      "quality_score": 0.8403,
-      "rationale": "Q=84% | Cap=large_cap($33.2B) | B/M=1.00 | ROA=4.4% | FCF/Y=15.6% | PTL=1.10x | A\u2265EG\u2717 | FCF/NI=2.0"
+      "ticker": "CPB",
+      "quality_score": 0.8274,
+      "rationale": "Q=83% | Cap=turnaround($6.2B) | B/M=0.64 | ROA=5.3% | FCF/Y=13.9% | PTL=1.05x | A\u2265EG\u2717 | IR+ | FCF/NI=1.6"
     },
     {
-      "ticker": "META",
-      "quality_score": 0.8264,
-      "rationale": "Q=83% | Cap=large_cap($125.7B) | B/M=1.00 | ROA=14.2% | FCF/Y=46.1% | PTL=1.17x | A\u2265EG\u2717 | FCF/NI=1.5"
+      "ticker": "DECK",
+      "quality_score": 0.8244,
+      "rationale": "Q=82% | Cap=large_cap($14.3B) | B/M=0.18 | ROA=19.9% | FCF/Y=5.3% | PTL=1.27x | A<EG\u2713 | FCF/NI=0.7"
     },
     {
-      "ticker": "ATO",
-      "quality_score": 0.8148,
-      "rationale": "Q=81% | Cap=turnaround($9.4B) | B/M=1.00 | ROA=3.5% | FCF/Y=17.8% | PTL=1.23x | FCF/NI=1.9"
+      "ticker": "MA",
+      "quality_score": 0.8095,
+      "rationale": "Q=81% | Cap=large_cap($437.8B) | B/M=0.02 | ROA=25.0% | FCF/Y=3.7% | PTL=1.03x | A<EG\u2713 | IR+ | FCF/NI=1.0"
     },
     {
-      "ticker": "KDP",
-      "quality_score": 0.8044,
-      "rationale": "Q=80% | Cap=large_cap($25.1B) | B/M=1.00 | ROA=4.1% | FCF/Y=12.7% | PTL=1.17x | A\u2265EG\u2717 | FCF/NI=1.5"
+      "ticker": "CHD",
+      "quality_score": 0.8024,
+      "rationale": "Q=80% | Cap=large_cap($22.1B) | B/M=0.19 | ROA=8.1% | FCF/Y=5.1% | PTL=1.15x | A<EG\u2713 | FCF/NI=1.5"
     },
     {
-      "ticker": "CMS",
-      "quality_score": 0.7979,
-      "rationale": "Q=80% | Cap=turnaround($8.2B) | B/M=1.00 | ROA=2.5% | FCF/Y=29.3% | PTL=1.10x | A\u2265EG\u2717 | FCF/NI=2.0"
+      "ticker": "TEL",
+      "quality_score": 0.8,
+      "rationale": "Q=80% | Cap=turnaround($9.0B) | B/M=1.00 | ROA=8.8% | FCF/Y=34.4% | PTL=1.37x | FCF/NI=1.6"
     },
     {
-      "ticker": "T",
-      "quality_score": 0.7714,
-      "rationale": "Q=77% | Cap=turnaround($252M) | B/M=0.00 | ROA=3.6% | FCF/Y=16787.8% | PTL=1.11x | IR+ | FCF/NI=2.0"
+      "ticker": "ULTA",
+      "quality_score": 0.8,
+      "rationale": "Q=80% | Cap=turnaround($2.0B) | B/M=1.00 | ROA=21.5% | FCF/Y=98.1% | PTL=1.35x | FCF/NI=1.5"
     },
     {
-      "ticker": "LII",
-      "quality_score": 0.7624,
-      "rationale": "Q=76% | Cap=turnaround($5.2B) | B/M=0.00 | ROA=20.1% | FCF/Y=15.2% | PTL=1.20x | IR+ | FCF/NI=1.3"
+      "ticker": "BRK-B",
+      "quality_score": 0.7993,
+      "rationale": "Q=80% | Cap=large_cap($1026.5B) | B/M=1062.23 | ROA=5.4% | FCF/Y=6.0% | PTL=1.05x | A\u2265EG\u2717 | IR+ | FCF/NI=0.8"
     },
     {
-      "ticker": "AZO",
-      "quality_score": 0.7619,
-      "rationale": "Q=76% | Cap=large_cap($35.0B) | B/M=0.00 | ROA=14.7% | FCF/Y=11.4% | PTL=1.09x | A\u2265EG\u2717 | IR+ | FCF/NI=1.6"
+      "ticker": "EFX",
+      "quality_score": 0.7993,
+      "rationale": "Q=80% | Cap=large_cap($21.2B) | B/M=0.22 | ROA=6.3% | FCF/Y=4.8% | PTL=1.06x | A<EG\u2713 | IR+ | FCF/NI=1.5"
     },
     {
-      "ticker": "CEG",
-      "quality_score": 0.7511,
-      "rationale": "Q=75% | Cap=large_cap($13.2B) | B/M=1.00 | ROA=3.1% | FCF/Y=12.2% | PTL=1.25x | FCF/NI=1.0"
+      "ticker": "FDS",
+      "quality_score": 0.7993,
+      "rationale": "Q=80% | Cap=turnaround($8.1B) | B/M=0.26 | ROA=10.9% | FCF/Y=7.2% | PTL=1.21x | A<EG\u2713 | IR+ | FCF/NI=1.0"
     },
     {
-      "ticker": "AAPL",
-      "quality_score": 0.75,
-      "rationale": "Q=75% | Cap=large_cap($50.7B) | B/M=1.00 | ROA=26.6% | FCF/Y=248.3% | PTL=1.52x | A\u2265EG\u2717 | FCF/NI=1.3"
+      "ticker": "FOX",
+      "quality_score": 0.799,
+      "rationale": "Q=80% | Cap=large_cap($24.1B) | B/M=0.45 | ROA=8.8% | FCF/Y=7.3% | PTL=1.22x | A\u2265EG\u2717 | IR+ | FCF/NI=0.9"
+    },
+    {
+      "ticker": "ACN",
+      "quality_score": 0.7973,
+      "rationale": "Q=80% | Cap=large_cap($111.0B) | B/M=0.28 | ROA=11.2% | FCF/Y=11.0% | PTL=1.05x | A\u2265EG\u2717 | IR+ | FCF/NI=1.6"
     }
   ],
   "signals": [],

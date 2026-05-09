@@ -62,6 +62,7 @@ logger = logging.getLogger("vmaa.data.hybrid")
 # ═══════════════════════════════════════════════════════════════════
 
 _TIGER_QC = None
+_TIGER_BARS_EXHAUSTED = False  # Set when Tiger 20-symbol/day bar limit is hit
 
 def _get_tiger_qc():
     global _TIGER_QC
@@ -550,11 +551,15 @@ def get_snapshot(ticker: str) -> dict:
 def get_bars_hybrid(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
     """
     Get OHLCV bars from Tiger (primary) -> yfinance (fallback).
-    Tiger get_bars() is more reliable and not rate-limited.
+    Tiger get_bars() is limited to 20 symbols/day for the current account
+    tier.  Once the limit is exhausted we skip Tiger for the rest of the
+    run and go straight to yfinance.
 
     Returns DataFrame with columns: Open, High, Low, Close, Volume
     (renamed to yfinance-compatible format). Or None if both sources fail.
     """
+    global _TIGER_BARS_EXHAUSTED
+
     # Check cache first (same-day reuse)
     if _CACHE_AVAILABLE:
         cached = cache_get(ticker, 'bars')
@@ -572,9 +577,9 @@ def get_bars_hybrid(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
             except Exception:
                 pass
 
-    # Try Tiger get_bars first
+    # Try Tiger get_bars first (skip if 20-symbol/day limit already hit)
     qc = _get_tiger_qc()
-    if qc:
+    if qc and not _TIGER_BARS_EXHAUSTED:
         try:
             # Map period strings to Tiger parameters
             period_map = {
@@ -605,7 +610,12 @@ def get_bars_hybrid(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
                         pass
                 return df
         except Exception as e:
-            logger.debug(f"  {ticker}: Tiger bars failed ({e}), trying yfinance")
+            msg = str(e)
+            if 'permission denied' in msg.lower() or '20 symbols' in msg.lower():
+                _TIGER_BARS_EXHAUSTED = True
+                logger.debug(f"  {ticker}: Tiger bar limit reached ({e}), falling back to yfinance for remaining stocks")
+            else:
+                logger.debug(f"  {ticker}: Tiger bars failed ({e}), trying yfinance")
 
     # Fallback: yfinance history
     try:
