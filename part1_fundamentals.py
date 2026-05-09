@@ -48,16 +48,83 @@ def screen_fundamentals(ticker: str, sector_medians: dict = None,
     Returns Part1Result if it passes, None if rejected.
     """
     try:
+        info = {}
+        hist = None
+        t = None
+        yf_ok = True
+        used_fallback = False
+
         if prefetched:
             info = prefetched.get('info', {})
             hist = prefetched.get('hist')
             t = prefetched.get('ticker')
-            if t is None:
+            if not info:
+                yf_ok = False
+
+        # Try yfinance first (if no prefetched or prefetched info empty)
+        if not info:
+            try:
                 t = yf.Ticker(ticker)
-        else:
-            t = yf.Ticker(ticker)
-            info = t.info
-            hist = t.history(period="1y")
+                info = t.info
+                hist = t.history(period="1y")
+            except Exception as yf_e:
+                logger.debug(f"  {ticker}: yfinance failed ({yf_e})")
+                yf_ok = False
+
+        # If yfinance failed (rate-limited / empty info), use Finnhub/SEC fallback
+        if not yf_ok or not info or not info.get('regularMarketPrice'):
+            # Try Finnhub first (fast, comprehensive)
+            from data.hybrid import get_finnhub_fundamentals, get_bars_hybrid, get_fundamentals_tiger, get_finnhub_recommendation
+            fund = get_finnhub_fundamentals(ticker)
+            bars = get_bars_hybrid(ticker, "1y")
+
+            if fund and len(fund) > 3:
+                info.update(fund)
+                # Get sector from Tiger if Finnhub didn't provide it
+                if 'sector' not in info or info.get('sector') == 'Unknown':
+                    try:
+                        from data.hybrid import _get_tiger_qc
+                        qc = _get_tiger_qc()
+                        if qc:
+                            ind = qc.get_stock_industry(ticker)
+                            if ind:
+                                for item in ind:
+                                    if item.get('industry_level') == 'GSECTOR':
+                                        info['sector'] = item.get('name_en', 'Unknown')
+                                        break
+                    except Exception:
+                        pass
+                # Populate essential fields from bars (average volume, price metadata)
+                if bars is not None and len(bars) >= 1:
+                    vol_col = 'Volume' if 'Volume' in bars.columns else 'volume'
+                    if len(bars) >= 20:
+                        info['averageVolume'] = int(bars[vol_col].tail(20).mean())
+                    else:
+                        info['averageVolume'] = int(bars[vol_col].mean())
+                hist = bars
+                if not yf_ok or t is None:
+                    t = yf.Ticker(ticker)
+                used_fallback = True
+                logger.debug(f"  {ticker}: Using Finnhub fallback data")
+            elif not fund or len(fund) < 3:
+                # Fallback to SEC EDGAR
+                if bars is not None and len(bars) >= 20:
+                    sec_fund = get_fundamentals_tiger(ticker)
+                    if sec_fund:
+                        info = _build_info_from_sec(ticker, sec_fund, bars)
+                        hist = bars
+                        if not yf_ok or t is None:
+                            t = yf.Ticker(ticker)
+                        used_fallback = True
+                        logger.debug(f"  {ticker}: Using Tiger/SEC fallback data")
+                    else:
+                        logger.debug(f"  {ticker}: No SEC fundamentals for fallback")
+                else:
+                    logger.debug(f"  {ticker}: Insufficient bar data ({len(bars) if bars is not None else 0} rows), skipping SEC")
+            
+            if not info and not used_fallback:
+                logger.debug(f"  {ticker}: No data from any source")
+                return None
 
         if not _basic_checks(info, hist, ticker):
             return None
@@ -290,7 +357,7 @@ def _check_safety_margin(info: dict, price: float) -> Tuple[bool, float, float]:
 # Criterion 5: Asset Expansion Constraint
 # ═══════════════════════════════════════════════════════════════════
 
-def _check_asset_efficiency(t: yf.Ticker) -> Tuple[bool, float, float, float, str]:
+def _check_asset_efficiency(t: yf.Ticker, ticker: str = None) -> Tuple[bool, float, float, float, str]:
     """
     Check ΔAssets < ΔEarnings — capital efficiency constraint.
     Prevents companies growing through reckless acquisitions or over-investment.
@@ -361,7 +428,37 @@ def _check_asset_efficiency(t: yf.Ticker) -> Tuple[bool, float, float, float, st
 
     except Exception as e:
         logger.debug(f"  Asset efficiency check failed: {e}")
-        return False, 0.0, 0.0, 0.0, "n/a"
+
+    # ── Fallback: SEC EDGAR when yfinance rate-limited ──
+    if ticker:
+        try:
+            from data.sec_edgar import get_sec_quarterly
+            assets = get_sec_quarterly(ticker, 'Assets')
+            incomes = get_sec_quarterly(ticker, 'NetIncomeLoss')
+
+            if assets and incomes and len(assets) >= 2 and len(incomes) >= 2:
+                # Use most recent two quarters
+                use_yoy = len(assets) >= 5 and len(incomes) >= 5
+                assets_latest = assets[0]['val']
+                assets_prev = assets[4]['val'] if (use_yoy and len(assets) > 4) else assets[1]['val']
+                ni_latest = incomes[0]['val']
+                ni_prev = incomes[4]['val'] if (use_yoy and len(incomes) > 4) else incomes[1]['val']
+
+                if assets_prev <= 0 or abs(ni_prev) < 1e-6:
+                    return False, 0.0, 0.0, 0.0, "n/a"
+
+                asset_growth = (assets_latest - assets_prev) / assets_prev
+                earnings_growth = (ni_latest - ni_prev) / abs(ni_prev)
+
+                passed = asset_growth < earnings_growth
+                status = "asset<earnings" if passed else "asset>=earnings"
+                score = P1C.weight_asset_efficiency if passed else 0.0
+                logger.debug(f"  {ticker}: SEC asset efficiency OK (status={status})")
+                return passed, round(asset_growth, 4), round(earnings_growth, 4), score, status
+        except Exception as sec_e:
+            logger.debug(f"  {ticker}: SEC asset efficiency fallback failed: {sec_e}")
+
+    return False, 0.0, 0.0, 0.0, "n/a"
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -439,6 +536,136 @@ def _check_earnings_authenticity(info: dict) -> Tuple[bool, float, float]:
 
 
 # ═══════════════════════════════════════════════════════════════════
+# SEC EDGAR → yfinance info dict builder (fallback when yf rate-limited)
+# ═══════════════════════════════════════════════════════════════════
+
+def _build_info_from_sec(ticker: str, fund: dict, bars: pd.DataFrame) -> dict:
+    """
+    Build a yfinance-compatible info dict from SEC EDGAR fundamental data
+    and Tiger/yfinance hybrid price bars.
+
+    Provides enough fields for all 7 Part 1 criteria to work without yfinance.
+    """
+    info = {}
+
+    # Basic metadata
+    info['shortName'] = ticker
+    info['symbol'] = ticker
+    info['sector'] = 'Unknown'  # SEC doesn't provide sector
+    info['industry'] = 'Unknown'
+
+    # Price from bars
+    if bars is not None and len(bars) >= 1:
+        close_col = 'Close' if 'Close' in bars.columns else 'close'
+        high_col = 'High' if 'High' in bars.columns else 'high'
+        low_col = 'Low' if 'Low' in bars.columns else 'low'
+        vol_col = 'Volume' if 'Volume' in bars.columns else 'volume'
+
+        price = float(bars[close_col].iloc[-1])
+        info['regularMarketPrice'] = price
+        info['currentPrice'] = price
+        info['previousClose'] = float(bars[close_col].iloc[-2]) if len(bars) >= 2 else price
+        info['fiftyTwoWeekHigh'] = float(bars[high_col].max())
+        info['fiftyTwoWeekLow'] = float(bars[low_col].min())
+        # Average volume
+        if len(bars) >= 20:
+            info['averageVolume'] = int(bars[vol_col].tail(20).mean())
+        else:
+            info['averageVolume'] = int(bars[vol_col].mean())
+    else:
+        info['regularMarketPrice'] = 0
+        info['currentPrice'] = 0
+        info['averageVolume'] = 0
+
+    # Revenue
+    info['totalRevenue'] = fund.get('totalRevenue', 0) or fund.get('revenue_ttm', 0)
+    info['revenueGrowth'] = 0  # Not available from single-company SEC data
+
+    # Net Income
+    info['netIncomeToCommon'] = fund.get('netIncomeToCommon', 0)
+    info['netIncome'] = fund.get('netIncomeToCommon', 0)
+
+    # EPS
+    info['trailingEps'] = fund.get('trailingEps', 0)
+    info['eps_ttm'] = fund.get('eps_ttm', 0)
+
+    # Assets & Equity
+    info['totalAssets'] = fund.get('totalAssets', 0)
+    info['totalEquity'] = fund.get('totalEquity', 0)
+
+    # Book Value — estimate from total equity if we have shares outstanding
+    book_value_raw = fund.get('bookValue_raw', 0)
+    if book_value_raw > 0:
+        # We don't have shares outstanding from SEC, use a typical range
+        # Try to get shares from Tiger briefs if price is available
+        try:
+            from data.hybrid import _get_tiger_qc
+            qc = _get_tiger_qc()
+            if qc:
+                briefs = qc.get_stock_delay_briefs([ticker])
+                if briefs is not None and not briefs.empty:
+                    mcap = float(briefs.iloc[0].get('market_cap', 0) or 0)
+                    price = info.get('regularMarketPrice', 0)
+                    if mcap > 0 and price > 0:
+                        shares = mcap / price
+                        if shares > 0:
+                            info['sharesOutstanding'] = int(shares)
+                            info['bookValue'] = book_value_raw / shares
+                            info['marketCap'] = mcap
+        except Exception:
+            pass
+        # If market cap still not set, estimate from price and typical shares
+        if not info.get('marketCap', 0):
+            price = info.get('regularMarketPrice', 0)
+            if price > 0:
+                # Estimate shares from total equity and book value
+                # Typical P/B range: 0.5-5x → shares = equity/(P/B * price)
+                # Use conservative P/B=1.5 as default
+                est_shares = book_value_raw / price  # if P/B=1
+                info['marketCap'] = price * est_shares
+                info['bookValue'] = price  # rough estimate
+    else:
+        info['bookValue'] = 0
+        info['marketCap'] = 0
+
+    # If market cap still 0, set a small positive value to avoid division errors
+    if info.get('marketCap', 0) <= 0 and info.get('regularMarketPrice', 0) > 0:
+        info['marketCap'] = info['regularMarketPrice'] * 10_000_000  # $10M min
+
+    # EBITDA
+    info['ebitda'] = fund.get('ebitda', 0)
+
+    # Free Cash Flow
+    info['freeCashflow'] = fund.get('freeCashflow', 0)
+
+    # ROA
+    info['returnOnAssets'] = fund.get('returnOnAssets', 0)
+
+    # ROE
+    info['returnOnEquity'] = fund.get('returnOnEquity', 0)
+
+    # Debt to Equity
+    info['debtToEquity'] = fund.get('debtToEquity', 0)
+
+    # Other yfinance fields with sensible defaults
+    info['beta'] = 1.0
+    info['shortRatio'] = 0
+    info['shortPercentOfFloat'] = 0
+    info['numberOfAnalystOpinions'] = 0
+    info['targetMeanPrice'] = 0
+    info['trailingPE'] = 0
+    info['forwardPE'] = 0
+    info['profitMargins'] = 0
+    info['earningsGrowth'] = 0
+    info['grossMargins'] = fund.get('grossMargins', 0)
+
+    # Mark data source
+    info['vmaa_data_source'] = 'tiger_sec_fallback'
+
+    return info
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Comprehensive Part 1 Evaluation
 # ═══════════════════════════════════════════════════════════════════
 
@@ -491,7 +718,7 @@ def _evaluate_part1(ticker: str, info: dict, hist: pd.DataFrame,
 
     # ── C5: Asset Expansion Constraint ──
     asset_pass, asset_growth, earnings_growth, asset_score, asset_status = \
-        _check_asset_efficiency(t)
+        _check_asset_efficiency(t, ticker)
     if asset_pass:
         quality_score += asset_score
         passed_criteria.append("asset_efficiency")

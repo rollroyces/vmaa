@@ -26,6 +26,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import pandas as pd
 import yfinance as yf
 import numpy as np
 
@@ -35,6 +36,15 @@ from data.sec_edgar import (
     has_sec_data,
     clear_cache as sec_clear_cache,
 )
+
+# SQLite data cache (720-day retention, once-per-day fetch)
+try:
+    from data.cache import cache_get, cache_set
+    _CACHE_AVAILABLE = True
+except ImportError:
+    _CACHE_AVAILABLE = False
+    def cache_get(*a, **kw): return None
+    def cache_set(*a, **kw): return False
 
 # Tiger Trade broker import (module-level for reuse)
 try:
@@ -531,6 +541,367 @@ def get_snapshot(ticker: str) -> dict:
     fund["ptl_ratio"] = price / low_52w if low_52w > 0 else 999
     
     return fund
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 5. YFINANCE FALLBACK — Bars + Fundamentals from Tiger/SEC
+# ═══════════════════════════════════════════════════════════════════
+
+def get_bars_hybrid(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
+    """
+    Get OHLCV bars from Tiger (primary) -> yfinance (fallback).
+    Tiger get_bars() is more reliable and not rate-limited.
+
+    Returns DataFrame with columns: Open, High, Low, Close, Volume
+    (renamed to yfinance-compatible format). Or None if both sources fail.
+    """
+    # Check cache first (same-day reuse)
+    if _CACHE_AVAILABLE:
+        cached = cache_get(ticker, 'bars')
+        if cached is not None:
+            try:
+                df = pd.DataFrame(cached)
+                if 'time' in df.columns:
+                    df['time'] = pd.to_datetime(df['time'], format='mixed')
+                    df = df.set_index('time')
+                    # Rename columns if needed
+                    rename = {'open':'Open','high':'High','low':'Low','close':'Close','volume':'Volume'}
+                    df = df.rename(columns={k:v for k,v in rename.items() if k in df.columns})
+                logger.debug(f"  {ticker}: bars loaded from cache ({len(df)} rows)")
+                return df
+            except Exception:
+                pass
+
+    # Try Tiger get_bars first
+    qc = _get_tiger_qc()
+    if qc:
+        try:
+            # Map period strings to Tiger parameters
+            period_map = {
+                "1y": ("day", 252),
+                "6mo": ("day", 126),
+                "3mo": ("day", 63),
+                "1mo": ("day", 22),
+                "1wk": ("week", 52),
+            }
+            bar_period, bar_limit = period_map.get(period, ("day", 252))
+            bars = qc.get_bars(ticker, period=bar_period, limit=bar_limit)
+            if bars is not None and not bars.empty:
+                # Convert time from epoch ms to datetime index
+                df = bars[['time','open','high','low','close','volume']].copy()
+                df['time'] = pd.to_datetime(df['time'], unit='ms')
+                df = df.set_index('time')
+                # Rename to yfinance-compatible column names
+                df = df.rename(columns={
+                    'open': 'Open', 'high': 'High',
+                    'low': 'Low', 'close': 'Close', 'volume': 'Volume'
+                })
+                logger.debug(f"  {ticker}: Tiger bars OK ({len(df)} rows)")
+                if _CACHE_AVAILABLE:
+                    try:
+                        cache_data = df.reset_index().to_dict('records')
+                        cache_set(ticker, 'bars', cache_data)
+                    except Exception:
+                        pass
+                return df
+        except Exception as e:
+            logger.debug(f"  {ticker}: Tiger bars failed ({e}), trying yfinance")
+
+    # Fallback: yfinance history
+    try:
+        t = yf.Ticker(ticker)
+        hist = t.history(period=period)
+        if hist is not None and len(hist) >= 5:
+            logger.debug(f"  {ticker}: yfinance bars OK ({len(hist)} rows)")
+            result_df = hist[['Open','High','Low','Close','Volume']]
+            if _CACHE_AVAILABLE:
+                try:
+                    cache_data = result_df.reset_index().to_dict('records')
+                    cache_set(ticker, 'bars', cache_data)
+                except Exception:
+                    pass
+            return result_df
+    except Exception as e:
+        logger.debug(f"  {ticker}: yfinance bars failed ({e})")
+
+    return None
+
+
+def get_fundamentals_tiger(ticker: str) -> dict:
+    """
+    Get fundamental data from SEC EDGAR when yfinance is rate-limited.
+    Uses SEC EDGAR as primary source for fundamentals.
+
+    Returns dict with keys matching a subset of yfinance info fields:
+    - totalRevenue, netIncomeToCommon, freeCashflow
+    - bookValue, totalAssets, currentAssets, currentLiabilities
+    - returnOnAssets, returnOnEquity, debtToEquity
+    - ebitda (estimated from operating_income + depreciation)
+    Returns empty dict if nothing works.
+    """
+    result = {}
+    try:
+        from data.sec_edgar import get_fundamentals_sec as sec_fund
+        sec = sec_fund(ticker)
+        if not sec:
+            return result
+
+        # Annual data
+        annual = sec.get('annual', {})
+        quarterly = sec.get('quarterly', {})
+
+        rev = annual.get('revenue', []) or annual.get('revenue_alt', [])
+        ni = annual.get('net_income', [])
+        eps = annual.get('eps_diluted', []) or annual.get('eps_basic', [])
+        ta = annual.get('total_assets', [])
+        ca = annual.get('current_assets', [])
+        cl = annual.get('current_liabilities', [])
+        te = annual.get('total_equity', [])
+        oi = annual.get('operating_income', [])
+        dep = annual.get('depreciation', [])
+        debt_lt = annual.get('debt_longterm', [])
+        gp = annual.get('gross_profit', [])
+
+        # Revenue
+        if rev and rev[0]:
+            result['totalRevenue'] = rev[0].get('val', 0)
+        if ni and ni[0]:
+            result['netIncomeToCommon'] = ni[0].get('val', 0)
+        if eps and eps[0]:
+            result['trailingEps'] = eps[0].get('val', 0)
+        if ta and ta[0]:
+            result['totalAssets'] = ta[0].get('val', 0)
+        if ca and ca[0]:
+            result['currentAssets'] = ca[0].get('val', 0)
+        if cl and cl[0]:
+            result['currentLiabilities'] = cl[0].get('val', 0)
+        if te and te[0]:
+            result['totalEquity'] = te[0].get('val', 0)
+
+        # ROA = net_income / total_assets
+        ni_val = result.get('netIncomeToCommon', 0)
+        ta_val = result.get('totalAssets', 1)
+        if ta_val > 0:
+            result['returnOnAssets'] = ni_val / ta_val
+
+        # ROE = net_income / total_equity
+        te_val = result.get('totalEquity', 0)
+        if te_val > 0:
+            result['returnOnEquity'] = ni_val / te_val
+
+        # Debt to Equity
+        if te_val > 0:
+            total_debt = (cl[0].get('val', 0) if cl and cl[0] else 0) + \
+                         (debt_lt[0].get('val', 0) if debt_lt and debt_lt[0] else 0)
+            if total_debt > 0:
+                result['debtToEquity'] = total_debt / te_val
+            else:
+                result['debtToEquity'] = 0.0
+
+        # Book value per share (we'll calculate in _build_info_from_sec with shares)
+        if te_val > 0:
+            result['bookValue_raw'] = te_val
+
+        # EBITDA estimate = operating_income + depreciation
+        oi_val = oi[0].get('val', 0) if oi and oi[0] else 0
+        dep_val = dep[0].get('val', 0) if dep and dep[0] else 0
+        result['ebitda'] = oi_val + dep_val
+
+        # Free cash flow estimate = operating_income + depreciation (EBITDA proxy) - capex
+        # We don't have CAPEX from SEC in our current concepts, use EBITDA as proxy
+        result['freeCashflow'] = result['ebitda']
+
+        # Try to get EPS from quarterly (more recent TTM)
+        q_eps = quarterly.get('eps_diluted', []) or quarterly.get('eps_basic', [])
+        if q_eps and len(q_eps) >= 4:
+            result['eps_ttm'] = sum(e.get('val', 0) for e in q_eps[:4])
+
+        # Revenue TTM from quarterly
+        q_rev = quarterly.get('revenue', []) or quarterly.get('revenue_alt', [])
+        if q_rev and len(q_rev) >= 4:
+            result['revenue_ttm'] = sum(r.get('val', 0) for r in q_rev[:4])
+
+        # Gross profit margin
+        gp_val = gp[0].get('val', 0) if gp and gp[0] else 0
+        if rev and rev[0]:
+            rev_val = rev[0].get('val', 0)
+            if rev_val > 0:
+                result['grossMargins'] = gp_val / rev_val
+
+        result['data_source'] = 'sec_edgar'
+        logger.debug(f"  {ticker}: SEC fundamentals OK")
+
+    except Exception as e:
+        logger.debug(f"  SEC EDGAR fundamentals failed for {ticker}: {e}")
+
+    return result
+
+
+def yfinance_available() -> bool:
+    """Quick check if yfinance is currently working (not rate-limited).
+    Uses SPY as a proxy — the most liquid and reliable ticker."""
+    try:
+        t = yf.Ticker('SPY')
+        info = t.info
+        price = info.get('regularMarketPrice', 0)
+        if price and float(price) > 0:
+            return True
+        # Try history as backup check
+        hist = t.history(period="5d")
+        return hist is not None and len(hist) >= 2
+    except Exception as e:
+        logger.debug(f"yfinance availability check failed: {e}")
+        return False
+
+
+def _is_yf_rate_limited(error: Exception) -> bool:
+    """Detect if an exception is caused by yfinance rate-limiting (HTTP 401)."""
+    msg = str(error)
+    return '401' in msg or 'Invalid Crumb' in msg or 'Unauthorized' in msg
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 6. FINNHUB — Fundamentals + Earnings + Recommendations
+# ═══════════════════════════════════════════════════════════════════
+
+_FINNHUB_KEY = "d2ebgbhr01qr1ro95mrgd2ebgbhr01qr1ro95ms0"
+
+
+def get_finnhub_fundamentals(ticker: str) -> dict:
+    """
+    Get fundamental metrics from Finnhub (all 133 metrics).
+    Fast API, no rate limit issues for small batches.
+    Returns dict with: marketCap, sector, industry, beta, roa, roe, 
+    bookValuePerShare, epsTTM, revenuePerShareTTM, fcfPerShare, 
+    debtToEquity, 52wHigh, 52wLow, ebitdaPerShare, dividendYield, etc.
+    """
+    # Check cache first
+    if _CACHE_AVAILABLE:
+        cached = cache_get(ticker, 'fundamentals')
+        if cached is not None:
+            return cached
+    import requests as _requests
+    result = {}
+    try:
+        resp = _requests.get(
+            f'https://finnhub.io/api/v1/stock/metric?symbol={ticker}&metric=all&token={_FINNHUB_KEY}',
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            metrics = data.get('metric', {})
+            if metrics:
+                # Map Finnhub field names to yfinance-compatible names
+                # Actual Finnhub metric field names (verified 2026-05-08)
+                mapping = {
+                    'marketCapitalization': 'marketCap',
+                    'bookValuePerShareAnnual': 'bookValue',
+                    'epsTTM': 'trailingEps',
+                    'revenuePerShareTTM': 'revenuePerShare',
+                    'beta': 'beta',
+                    'roaTTM': 'returnOnAssets',
+                    'roeTTM': 'returnOnEquity',
+                    'ebitdPerShareTTM': 'ebitda',
+                    'totalDebt/totalEquityAnnual': 'debtToEquity',
+                    '52WeekHigh': 'fiftyTwoWeekHigh',
+                    '52WeekLow': 'fiftyTwoWeekLow',
+                    'dividendYieldIndicatedAnnual': 'dividendYield',
+                    'epsBasicExclExtraItemsTTM': 'trailingEps',  # alt EPS source
+                }
+                for fin_key, yf_key in mapping.items():
+                    if fin_key in metrics and metrics[fin_key] is not None:
+                        # Don't overwrite trailingEps from epsTTM with the backup source
+                        if yf_key == 'trailingEps' and yf_key in result:
+                            continue
+                        result[yf_key] = metrics[fin_key]
+                
+                # Also fetch company profile for sector, name, shares outstanding
+                try:
+                    prof_resp = _requests.get(
+                        f'https://finnhub.io/api/v1/stock/profile2?symbol={ticker}&token={_FINNHUB_KEY}',
+                        timeout=10
+                    )
+                    if prof_resp.status_code == 200:
+                        profile = prof_resp.json()
+                        if profile.get('finnhubIndustry'):
+                            result['sector'] = profile['finnhubIndustry']
+                        if profile.get('name'):
+                            result['shortName'] = profile['name']
+                        if profile.get('shareOutstanding'):
+                            result['sharesOutstanding'] = float(profile['shareOutstanding']) * 1e6  # Finnhub returns in millions
+                        # Note: marketCap already set from metrics above, don't double-set here
+                        # (profile marketCap is same scale, would cause double-multiplication)
+                except Exception:
+                    pass
+                
+                # Estimate market cap if available (Finnhub returns in millions)
+                if 'marketCap' in result:
+                    result['marketCap'] = int(result['marketCap'] * 1e6)
+                
+                # Free cash flow: Finnhub doesn't provide per-share FCF directly.
+                # We can estimate from EV/FCF ratio if we have EV.
+                # For now, use yfinance-style composite from per-share EBITDA.
+                result['_source'] = 'finnhub'
+    except Exception as e:
+        pass
+    
+    # Store in cache
+    if _CACHE_AVAILABLE and result and len(result) > 3:
+        cache_set(ticker, 'fundamentals', result)
+    
+    return result
+
+
+def get_finnhub_earnings(ticker: str) -> list:
+    """
+    Get quarterly earnings from Finnhub.
+    Returns list of {period, actual, estimate, surprise, quarter, year}
+    """
+    # Check cache first
+    if _CACHE_AVAILABLE:
+        cached = cache_get(ticker, 'earnings')
+        if cached is not None:
+            return cached
+    import requests as _requests
+    try:
+        resp = _requests.get(
+            f'https://finnhub.io/api/v1/stock/earnings?symbol={ticker}&token={_FINNHUB_KEY}',
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if _CACHE_AVAILABLE and data:
+                cache_set(ticker, 'earnings', data)
+            return data
+    except Exception:
+        pass
+    return []
+
+
+def get_finnhub_recommendation(ticker: str) -> list:
+    """
+    Get analyst recommendations from Finnhub.
+    Returns list of {period, buy, hold, sell, strongBuy, strongSell}
+    """
+    # Check cache first
+    if _CACHE_AVAILABLE:
+        cached = cache_get(ticker, 'analyst')
+        if cached is not None:
+            return cached
+    import requests as _requests
+    try:
+        resp = _requests.get(
+            f'https://finnhub.io/api/v1/stock/recommendation?symbol={ticker}&token={_FINNHUB_KEY}',
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if _CACHE_AVAILABLE and data:
+                cache_set(ticker, 'analyst', data)
+            return data
+    except Exception:
+        pass
+    return []
 
 
 # ═══════════════════════════════════════════════════════════════════

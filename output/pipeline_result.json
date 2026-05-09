@@ -1,6 +1,7 @@
 {
-  "status": "no_candidates",
-  "timestamp": "2026-05-08 16:01:35.794920",
+  "status": "complete",
+  "timestamp": "2026-05-09T00:18:02.102575",
+  "elapsed_seconds": 39.180611,
   "market": {
     "spy_price": 0,
     "above_ma50": true,
@@ -9,6 +10,97 @@
     "market_ok": true,
     "position_scalar": 0.75
   },
-  "part1_scanned": 2432,
-  "part1_passed": 0
+  "pipeline": {
+    "universe_size": 503,
+    "part1_passed": 14,
+    "part1_pass_rate": "2.8%",
+    "part2_signals": 0,
+    "part2_entry_ready": 0,
+    "candidates": 0,
+    "decisions": 0,
+    "executed": 0,
+    "skipped": 0
+  },
+  "quality_pool_top20": [
+    {
+      "ticker": "RSG",
+      "quality_score": 0.9462,
+      "rationale": "Q=95% | Cap=large_cap($11.4B) | B/M=1.00 | ROA=5.5% | FCF/Y=37.5% | PTL=1.01x | FCF/NI=2.0"
+    },
+    {
+      "ticker": "RMD",
+      "quality_score": 0.9325,
+      "rationale": "Q=93% | Cap=turnaround($3.4B) | B/M=1.00 | ROA=13.1% | FCF/Y=38.6% | PTL=1.04x | FCF/NI=1.4"
+    },
+    {
+      "ticker": "DGX",
+      "quality_score": 0.8908,
+      "rationale": "Q=89% | Cap=turnaround($6.8B) | B/M=1.00 | ROA=5.3% | FCF/Y=25.1% | PTL=1.14x | FCF/NI=2.0"
+    },
+    {
+      "ticker": "RVTY",
+      "quality_score": 0.8456,
+      "rationale": "Q=85% | Cap=turnaround($7.4B) | B/M=1.00 | ROA=5.6% | FCF/Y=9.9% | PTL=1.24x | FCF/NI=1.1"
+    },
+    {
+      "ticker": "REG",
+      "quality_score": 0.8318,
+      "rationale": "Q=83% | Cap=turnaround($6.7B) | B/M=1.00 | ROA=2.9% | FCF/Y=19.4% | PTL=1.16x | FCF/NI=2.0"
+    },
+    {
+      "ticker": "QCOM",
+      "quality_score": 0.8,
+      "rationale": "Q=80% | Cap=large_cap($30.7B) | B/M=1.00 | ROA=13.1% | FCF/Y=31.2% | PTL=1.80x | FCF/NI=1.3"
+    },
+    {
+      "ticker": "REGN",
+      "quality_score": 0.8,
+      "rationale": "Q=80% | Cap=large_cap($22.7B) | B/M=1.00 | ROA=10.5% | FCF/Y=19.7% | PTL=1.50x | FCF/NI=1.1"
+    },
+    {
+      "ticker": "STLD",
+      "quality_score": 0.8,
+      "rationale": "Q=80% | Cap=turnaround($8.9B) | B/M=1.00 | ROA=16.4% | FCF/Y=40.2% | PTL=1.98x | FCF/NI=1.5"
+    },
+    {
+      "ticker": "TER",
+      "quality_score": 0.8,
+      "rationale": "Q=80% | Cap=turnaround($2.5B) | B/M=1.00 | ROA=12.9% | FCF/Y=25.0% | PTL=4.74x | FCF/NI=1.4"
+    },
+    {
+      "ticker": "RL",
+      "quality_score": 0.7965,
+      "rationale": "Q=80% | Cap=turnaround($2.5B) | B/M=1.00 | ROA=7.9% | FCF/Y=36.5% | PTL=1.46x | FCF/NI=1.8"
+    },
+    {
+      "ticker": "O",
+      "quality_score": 0.7332,
+      "rationale": "Q=73% | Cap=large_cap($38.8B) | B/M=1.00 | ROA=1.3% | FCF/Y=4.9% | PTL=1.14x | FCF/NI=2.0"
+    },
+    {
+      "ticker": "TSLA",
+      "quality_score": 0.7117,
+      "rationale": "Q=71% | Cap=large_cap($72.9B) | B/M=1.00 | ROA=12.3% | FCF/Y=12.6% | PTL=1.57x | FCF/NI=0.6"
+    },
+    {
+      "ticker": "PFE",
+      "quality_score": 0.7076,
+      "rationale": "Q=71% | Cap=large_cap($88.2B) | B/M=1.00 | ROA=1.0% | FCF/Y=7.1% | PTL=1.23x | FCF/NI=2.0"
+    },
+    {
+      "ticker": "RTX",
+      "quality_score": 0.6618,
+      "rationale": "Q=66% | Cap=large_cap($60.2B) | B/M=1.00 | ROA=2.0% | FCF/Y=12.9% | PTL=1.40x | FCF/NI=2.0"
+    }
+  ],
+  "signals": [],
+  "candidates": [],
+  "decisions": [],
+  "execution": {
+    "decisions": [],
+    "executed_count": 0,
+    "skipped_count": 0,
+    "executed": [],
+    "skipped": []
+  }
 }

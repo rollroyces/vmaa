@@ -19,3 +19,4 @@ backtest/output/
 # Runtime data
 data/cache/
 engine/data/orders/
+cache/

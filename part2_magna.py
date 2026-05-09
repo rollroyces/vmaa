@@ -118,104 +118,163 @@ def batch_screen_magna(quality_pool: List[Part1Result], max_workers: int = 12) -
 # M: Massive Earnings Acceleration
 # ═══════════════════════════════════════════════════════════════════
 
-def check_earnings_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
+def check_earnings_accel(t: yf.Ticker, ticker: str = None) -> Tuple[bool, float, float, float]:
     """
     Check for massive earnings acceleration.
     Compares latest quarter EPS growth vs previous quarter.
+    Falls back to SEC EDGAR quarterly EPS when yfinance fails.
     Returns: (passed, current_growth, prev_growth, acceleration)
     """
+    yf_failed = False
     try:
         fin = t.quarterly_financials
         if fin is None or fin.empty:
-            return False, 0.0, 0.0, 0.0
-
-        # Try to get Diluted EPS
-        eps = None
-        for label in ['Diluted EPS', 'DilutedEPS', 'Basic EPS', 'BasicEPS']:
-            if label in fin.index:
-                eps = fin.loc[label]
-                break
-        if eps is None:
-            for idx in fin.index:
-                if 'eps' in str(idx).lower() or 'earnings per share' in str(idx).lower():
-                    eps = fin.loc[idx]
+            yf_failed = True
+        else:
+            # Try to get Diluted EPS
+            eps = None
+            for label in ['Diluted EPS', 'DilutedEPS', 'Basic EPS', 'BasicEPS']:
+                if label in fin.index:
+                    eps = fin.loc[label]
                     break
+            if eps is None:
+                for idx in fin.index:
+                    if 'eps' in str(idx).lower() or 'earnings per share' in str(idx).lower():
+                        eps = fin.loc[idx]
+                        break
 
-        if eps is None or len(eps) < 3:
-            return False, 0.0, 0.0, 0.0
+            if eps is None or len(eps) < 3:
+                yf_failed = True
+            else:
+                # Latest Q, Previous Q, Same Q last year
+                eps_q0 = float(eps.iloc[0])
+                eps_q1 = float(eps.iloc[1])
+                eps_q4 = float(eps.iloc[4]) if len(eps) > 4 else (float(eps.iloc[3]) if len(eps) > 3 else eps_q1)
 
-        # Latest Q, Previous Q, Same Q last year
-        eps_q0 = float(eps.iloc[0])
-        eps_q1 = float(eps.iloc[1])
-        eps_q4 = float(eps.iloc[4]) if len(eps) > 4 else (float(eps.iloc[3]) if len(eps) > 3 else eps_q1)
+                if abs(eps_q1) < 1e-6 or abs(eps_q4) < 1e-6:
+                    yf_failed = True
+                else:
+                    current_growth = (eps_q0 - eps_q4) / abs(eps_q4)
+                    prev_growth = (eps_q1 - eps_q4) / abs(eps_q4) if len(eps) > 3 else current_growth
+                    acceleration = current_growth - prev_growth
 
-        if abs(eps_q1) < 1e-6 or abs(eps_q4) < 1e-6:
-            return False, 0.0, 0.0, 0.0
-
-        current_growth = (eps_q0 - eps_q4) / abs(eps_q4)
-        prev_growth = (eps_q1 - eps_q4) / abs(eps_q4) if len(eps) > 3 else current_growth
-        acceleration = current_growth - prev_growth
-
-        # Must have positive current growth AND significant acceleration
-        passed = (current_growth >= P2C.eps_growth_min and
-                  acceleration >= P2C.eps_accel_min)
-
-        return passed, round(current_growth, 4), round(prev_growth, 4), round(acceleration, 4)
+                    passed = (current_growth >= P2C.eps_growth_min and
+                              acceleration >= P2C.eps_accel_min)
+                    return passed, round(current_growth, 4), round(prev_growth, 4), round(acceleration, 4)
 
     except Exception as e:
-        logger.debug(f"  Earnings acceleration check failed: {e}")
-        return False, 0.0, 0.0, 0.0
+        logger.debug(f"  Earnings acceleration check failed (yfinance): {e}")
+        yf_failed = True
+
+    # ── Fallback: SEC EDGAR quarterly EPS ──
+    if yf_failed and ticker:
+        try:
+            from data.sec_edgar import get_sec_quarterly
+            eps_data = get_sec_quarterly(ticker, 'EarningsPerShareDiluted')
+            if not eps_data:
+                eps_data = get_sec_quarterly(ticker, 'EarningsPerShareBasic')
+
+            if eps_data and len(eps_data) >= 3:
+                # Latest Q vs Same Q last year (QoQ same quarter)
+                eps_q0 = eps_data[0].get('val', 0)
+                eps_q1 = eps_data[1].get('val', 0)
+                # Same quarter last year = offset 4 quarters
+                eps_q4 = eps_data[4].get('val', 0) if len(eps_data) > 4 else eps_q0
+
+                if abs(eps_q4) > 1e-6:
+                    current_growth = (eps_q0 - eps_q4) / abs(eps_q4)
+                    prev_growth = (eps_q1 - eps_q4) / abs(eps_q4) if len(eps_data) > 3 else current_growth
+                    acceleration = current_growth - prev_growth
+
+                    passed = (current_growth >= P2C.eps_growth_min and
+                              acceleration >= P2C.eps_accel_min)
+                    logger.debug(f"  {ticker}: SEC earnings accel OK "
+                                f"(growth={current_growth:.2%}, accel={acceleration:.2%})")
+                    return passed, round(current_growth, 4), round(prev_growth, 4), round(acceleration, 4)
+        except Exception as sec_e:
+            logger.debug(f"  {ticker}: SEC earnings fallback failed: {sec_e}")
+
+    return False, 0.0, 0.0, 0.0
 
 
 # ═══════════════════════════════════════════════════════════════════
 # A: Acceleration of Sales
 # ═══════════════════════════════════════════════════════════════════
 
-def check_sales_accel(t: yf.Ticker) -> Tuple[bool, float, float, float]:
+def check_sales_accel(t: yf.Ticker, ticker: str = None) -> Tuple[bool, float, float, float]:
     """
     Check for revenue acceleration.
     Compares latest quarter revenue growth vs previous quarter.
+    Falls back to SEC EDGAR quarterly revenue when yfinance fails.
     Returns: (passed, current_growth, prev_growth, acceleration)
     """
+    yf_failed = False
     try:
         fin = t.quarterly_financials
         if fin is None or fin.empty:
-            return False, 0.0, 0.0, 0.0
-
-        # Get Total Revenue
-        revenue = None
-        for label in ['Total Revenue', 'TotalRevenue', 'Revenue']:
-            if label in fin.index:
-                revenue = fin.loc[label]
-                break
-        if revenue is None:
-            for idx in fin.index:
-                if 'revenue' in str(idx).lower():
-                    revenue = fin.loc[idx]
+            yf_failed = True
+        else:
+            # Get Total Revenue
+            revenue = None
+            for label in ['Total Revenue', 'TotalRevenue', 'Revenue']:
+                if label in fin.index:
+                    revenue = fin.loc[label]
                     break
+            if revenue is None:
+                for idx in fin.index:
+                    if 'revenue' in str(idx).lower():
+                        revenue = fin.loc[idx]
+                        break
 
-        if revenue is None or len(revenue) < 3:
-            return False, 0.0, 0.0, 0.0
+            if revenue is None or len(revenue) < 3:
+                yf_failed = True
+            else:
+                rev_q0 = float(revenue.iloc[0])
+                rev_q1 = float(revenue.iloc[1])
+                rev_q4 = float(revenue.iloc[4]) if len(revenue) > 4 else (float(revenue.iloc[3]) if len(revenue) > 3 else rev_q1)
 
-        rev_q0 = float(revenue.iloc[0])
-        rev_q1 = float(revenue.iloc[1])
-        rev_q4 = float(revenue.iloc[4]) if len(revenue) > 4 else (float(revenue.iloc[3]) if len(revenue) > 3 else rev_q1)
+                if rev_q4 <= 0:
+                    yf_failed = True
+                else:
+                    current_growth = (rev_q0 - rev_q4) / rev_q4
+                    prev_growth = (rev_q1 - rev_q4) / rev_q4
+                    acceleration = current_growth - prev_growth
 
-        if rev_q4 <= 0:
-            return False, 0.0, 0.0, 0.0
-
-        current_growth = (rev_q0 - rev_q4) / rev_q4
-        prev_growth = (rev_q1 - rev_q4) / rev_q4
-        acceleration = current_growth - prev_growth
-
-        passed = (current_growth >= P2C.revenue_growth_min and
-                  acceleration >= P2C.revenue_accel_min)
-
-        return passed, round(current_growth, 4), round(prev_growth, 4), round(acceleration, 4)
+                    passed = (current_growth >= P2C.revenue_growth_min and
+                              acceleration >= P2C.revenue_accel_min)
+                    return passed, round(current_growth, 4), round(prev_growth, 4), round(acceleration, 4)
 
     except Exception as e:
-        logger.debug(f"  Sales acceleration check failed: {e}")
-        return False, 0.0, 0.0, 0.0
+        logger.debug(f"  Sales acceleration check failed (yfinance): {e}")
+        yf_failed = True
+
+    # ── Fallback: SEC EDGAR quarterly revenue ──
+    if yf_failed and ticker:
+        try:
+            from data.sec_edgar import get_sec_quarterly
+            rev_data = get_sec_quarterly(ticker, 'Revenues')
+            if not rev_data:
+                rev_data = get_sec_quarterly(ticker, 'RevenueFromContractWithCustomerExcludingAssessedTax')
+
+            if rev_data and len(rev_data) >= 3:
+                rev_q0 = rev_data[0].get('val', 0)
+                rev_q1 = rev_data[1].get('val', 0)
+                rev_q4 = rev_data[4].get('val', 0) if len(rev_data) > 4 else rev_q0
+
+                if rev_q4 > 0:
+                    current_growth = (rev_q0 - rev_q4) / rev_q4
+                    prev_growth = (rev_q1 - rev_q4) / rev_q4 if len(rev_data) > 3 else current_growth
+                    acceleration = current_growth - prev_growth
+
+                    passed = (current_growth >= P2C.revenue_growth_min and
+                              acceleration >= P2C.revenue_accel_min)
+                    logger.debug(f"  {ticker}: SEC sales accel OK "
+                                f"(growth={current_growth:.2%}, accel={acceleration:.2%})")
+                    return passed, round(current_growth, 4), round(prev_growth, 4), round(acceleration, 4)
+        except Exception as sec_e:
+            logger.debug(f"  {ticker}: SEC sales fallback failed: {sec_e}")
+
+    return False, 0.0, 0.0, 0.0
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -459,7 +518,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
             logger.debug(f"  {ticker}: IPO > 10yr ({ipo_years:.0f}yr), soft flag (not rejected)")
 
     # ── M: Earnings Acceleration (graduated scoring) ──
-    m_pass, eps_curr, eps_prev, eps_accel = check_earnings_accel(t)
+    m_pass, eps_curr, eps_prev, eps_accel = check_earnings_accel(t, ticker)
     # Graduated EPS score: 20%+=2pt, 15%+=1.5pt, 10%+=1pt, 5%+=0.5pt
     eps_growth_rate = eps_curr if eps_curr > 0 else 0
     eps_score = 0.0
@@ -475,7 +534,7 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
         trigger_signals.append(f'M({eps_score:.1f})')
 
     # ── A: Sales Acceleration (graduated scoring) ──
-    a_pass, rev_curr, rev_prev, rev_accel = check_sales_accel(t)
+    a_pass, rev_curr, rev_prev, rev_accel = check_sales_accel(t, ticker)
     # Graduated sales score: 10%+=2pt, 8%+=1.5pt, 5%+=1pt
     sales_score = 0.0
     if rev_curr >= 0.10: sales_score = 2.0

@@ -460,6 +460,14 @@ def run_risk_and_execute(
 
         # Generate decision
         decision = generate_trade_decision(c, portfolio_value, existing_tickers, market)
+        
+        # Attach extra metadata for pipeline output
+        decision._sentiment_label = c.sentiment.sentiment_label if c.sentiment else ''
+        decision._sentiment_score = c.sentiment.composite_score if c.sentiment else 0
+        decision._vcp_entry_quality = get_vcp_entry_quality(c._vcp) if hasattr(c, '_vcp') and c._vcp else 'NO_VCP'
+        decision._quality_score = c.part1.quality_score
+        decision._magna_score = c.part2.magna_score
+        
         decisions.append(decision)
 
         # Execute
@@ -701,7 +709,7 @@ def run_full_pipeline(
 
     return {
         'status': 'complete',
-        'timestamp': str(start_time),
+        'timestamp': datetime.now().isoformat(),
         'elapsed_seconds': elapsed,
         'market': _market_dict(market),
         'pipeline': {
@@ -727,22 +735,66 @@ def run_full_pipeline(
                 'ticker': s.ticker,
                 'magna_score': s.magna_score,
                 'entry_ready': s.entry_ready,
-                'triggers': s.trigger_signals,
-            } for s in signals[:20]
+                'trigger_signals': s.trigger_signals,
+                'm_earnings_accel': s.m_earnings_accel,
+                'a_sales_accel': s.a_sales_accel,
+                'g_gap_up': s.g_gap_up,
+                'n_neglect_base': s.n_neglect_base,
+                'short_interest_score': s.short_interest_score,
+                'analyst_upgrades': s.analyst_upgrades,
+                'eps_acceleration': round(s.eps_acceleration, 4),
+                'revenue_acceleration': round(s.revenue_acceleration, 4),
+                'gap_pct': round(s.gap_pct, 4),
+            }
+            for s in signals
+        ],
+        'candidates': [
+            {
+                'ticker': c.ticker,
+                'quality_score': c.quality_score,
+                'magna_score': c.magna_score,
+                'composite_rank': c.composite_rank,
+                'entry_triggered': c.entry_triggered,
+                'vcp_detected': getattr(c._vcp, 'vcp_detected', False) if hasattr(c, '_vcp') and c._vcp else False,
+                'vcp_quality': c._vcp.vcp_quality if hasattr(c, '_vcp') and c._vcp else 0,
+                'sentiment_label': c.sentiment.sentiment_label if c.sentiment else '',
+                'sentiment_score': c.sentiment.composite_score if c.sentiment else 0,
+            }
+            for c in candidates
         ],
         'decisions': [
             {
                 'ticker': d.ticker,
                 'action': d.action,
                 'quantity': d.quantity,
-                'entry': d.entry_price,
+                'entry_price': d.entry_price,
                 'stop_loss': d.stop_loss,
-                'confidence': d.confidence_score,
+                'stop_type': d.stop_type,
+                'take_profits': d.take_profits,
+                'trailing_stop_pct': d.trailing_stop_pct,
+                'trailing_activate_pct': d.trailing_activate_pct,
+                'position_pct': d.position_pct,
+                'risk_amount': d.risk_amount,
+                'reward_ratio': d.reward_ratio,
+                'confidence_score': d.confidence_score,
                 'risk_flags': d.risk_flags,
+                'entry_method': d.entry_method,
+                'sentiment_label': getattr(d, '_sentiment_label', ''),
+                'sentiment_score': getattr(d, '_sentiment_score', 0),
+                'vcp_entry_quality': getattr(d, '_vcp_entry_quality', 'NO_VCP'),
                 'rationale': d.rationale,
-            } for d in exec_result['decisions']
+                'part1_quality_score': getattr(d, '_quality_score', 0),
+                'part2_magna_score': getattr(d, '_magna_score', 0),
+            }
+            for d in exec_result['decisions']
         ],
-        'execution': exec_result,
+        'execution': {
+            'decisions': exec_result.get('decisions', []),
+            'executed_count': exec_result.get('executed_count', 0),
+            'skipped_count': exec_result.get('skipped_count', 0),
+            'executed': exec_result.get('executed', []),
+            'skipped': exec_result.get('skipped', []),
+        },
     }
 
 
