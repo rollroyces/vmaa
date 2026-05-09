@@ -22,6 +22,7 @@ import logging
 import logging as _logging
 _logging.getLogger("tiger_openapi").setLevel(_logging.WARNING)
 _logging.getLogger("getmac").setLevel(_logging.WARNING)
+_logging.getLogger("urllib3.connectionpool").setLevel(_logging.WARNING)
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,6 +30,17 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import yfinance as yf
 import numpy as np
+
+# Finnhub rate limit tracking (free tier: 60 calls/min)
+_FINNHUB_CALL_TIMES = []
+
+# Increase Tiger API connection pool (default size=1 causes bottleneck)
+try:
+    from urllib3 import PoolManager, HTTPConnectionPool
+    # Patch: increase pool size for Tiger API host
+    _tiger_adapter = HTTPConnectionPool('openapi.tigerfintech.com', maxsize=20, block=False)
+except Exception:
+    pass
 
 from data.sec_edgar import (
     get_fundamentals_sec,
@@ -62,21 +74,33 @@ logger = logging.getLogger("vmaa.data.hybrid")
 # ═══════════════════════════════════════════════════════════════════
 
 _TIGER_QC = None
+_TIGER_LOCK = __import__('threading').Lock()
 _TIGER_BARS_EXHAUSTED = False  # Set when Tiger 20-symbol/day bar limit is hit
 
 def _get_tiger_qc():
     global _TIGER_QC
     if _TIGER_QC is None:
-        try:
-            if TigerBroker is None:
-                return None
-            broker = TigerBroker()
-            _TIGER_QC = broker.quote_client
-        except Exception as e:
-            logger.debug(f"Tiger init failed: {e}")
+        with _TIGER_LOCK:
+            if _TIGER_QC is not None:
+                return _TIGER_QC
+            try:
+                if TigerBroker is None:
+                    return None
+                broker = TigerBroker()
+                _TIGER_QC = broker.quote_client
+                # Increase Tiger API connection pool for concurrent workers
+                try:
+                    for client in [broker.trade_client, broker.quote_client]:
+                        session = getattr(client, '_session', None)
+                        if session:
+                            from requests.adapters import HTTPAdapter
+                            adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20, max_retries=3)
+                            session.mount('https://', adapter)
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.debug(f"Tiger init failed: {e}")
     return _TIGER_QC
-
-
 def get_price(ticker: str) -> Tuple[float, int, str, str]:
     """
     Get current price from Tiger (primary) → yfinance (fallback).
@@ -791,6 +815,18 @@ def get_finnhub_fundamentals(ticker: str) -> dict:
         if cached is not None:
             return cached
     import requests as _requests
+    import time as _time
+    
+    # Rate limit: ensure max 50 calls per 60 seconds (under free tier 60/min)
+    global _FINNHUB_CALL_TIMES
+    now = _time.time()
+    _FINNHUB_CALL_TIMES = [t for t in _FINNHUB_CALL_TIMES if t > now - 60]
+    if len(_FINNHUB_CALL_TIMES) >= 50:
+        sleep_time = 60 - (now - _FINNHUB_CALL_TIMES[0])
+        if sleep_time > 0:
+            _time.sleep(sleep_time)
+    _FINNHUB_CALL_TIMES.append(_time.time())
+    
     result = {}
     try:
         resp = _requests.get(

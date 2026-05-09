@@ -893,7 +893,7 @@ if __name__ == '__main__':
                         help='Specific tickers (comma or space separated)')
     parser.add_argument('--source', default='sp500',
                         help='Universe source: sp500, russell2000, nasdaq100, combined, custom')
-    parser.add_argument('--workers', type=int, default=15,
+    parser.add_argument('--workers', type=int, default=8,
                         help='Parallel workers for yfinance I/O (default: 15)')
     parser.add_argument('--output', default='output/pipeline_result.json',
                         help='Output file path')
