@@ -247,6 +247,63 @@ class TigerBroker:
         """Convenience: sell with market order."""
         return self.place_order(symbol, 'SELL', quantity, 'MKT')
 
+    def set_stop_loss(self, symbol: str, quantity: int, stop_pct: float,
+                      reference_price: float = None) -> OrderResult:
+        """
+        Place a stop-loss.
+        Paper Tiger doesn't support STOP/STP_LMT (expire instantly).
+        Sell LIMIT orders below market also expire in paper.
+        
+        Solution: Use MARKET order immediately (only for paper).
+        For live trading, use STOP_LMT on a real brokerage account.
+        """
+        if reference_price is None:
+            try:
+                contract = self.trade_client.get_contract(symbol, sec_type=SecurityType.STK)
+                quotes = self.quote_client.get_real_time_quotes(contract)
+                if quotes:
+                    reference_price = float(quotes[0].latest_price)
+                else:
+                    raise ValueError("No quote")
+            except Exception as e:
+                logger.error(f"  set_stop_loss: couldn't get price for {symbol}: {e}")
+                return OrderResult(
+                    order_id=-1, symbol=symbol, action='SELL',
+                    quantity=quantity, order_type='MKT',
+                    status='REJECTED', reason=str(e))
+        
+        stop_price = round(reference_price * (1 - stop_pct), 2)
+        logger.info(f"  STOP LOSS (monitor): {symbol} at ${stop_price} "
+                    f"({stop_pct*100:.0f}% below ${reference_price:.2f})")
+        
+        # Return a virtual stop — actual execution handled by check_stops()
+        return OrderResult(
+            order_id=-1, symbol=symbol, action='SELL',
+            quantity=quantity, order_type='MONITOR',
+            limit_price=stop_price, status='HELD_VIRTUAL',
+            filled_quantity=0, filled_price=0.0,
+            timestamp=str(datetime.now()),
+            reason=f"Virtual stop at ${stop_price} — monitored by check_stops()")
+
+    def check_stops(self) -> List[OrderResult]:
+        """
+        Check all positions against their stop levels and execute if triggered.
+        Call this periodically (e.g. every heartbeat/min).
+        """
+        triggered = []
+        positions = self.get_positions()
+        for p in positions:
+            # Check if position has a virtual stop
+            stop_level = round(p.average_cost * 0.88, 2)  # -12%
+            current_price = p.market_price
+            
+            if current_price <= stop_level:
+                logger.warning(f"  STOP TRIGGERED: {p.symbol} at ${current_price:.2f} "
+                              f"<= stop ${stop_level}")
+                result = self.sell_market(p.symbol, p.quantity)
+                triggered.append(result)
+        return triggered
+
     def get_orders(self, limit: int = 20) -> List[OrderResult]:
         """Get recent orders."""
         raw = self.trade_client.get_orders()
@@ -266,6 +323,31 @@ class TigerBroker:
                 reason=None,
             ))
         return orders
+
+    def cancel_order(self, order_id: int) -> bool:
+        """Cancel an open order by ID."""
+        try:
+            self.trade_client.cancel_order(order_id)
+            logger.info(f"  Cancel order {order_id}: OK")
+            return True
+        except Exception as e:
+            logger.error(f"  Cancel order {order_id} failed: {e}")
+            return False
+
+    def sync_stop_loss(self, symbol: str, quantity: int, stop_pct: float) -> None:
+        """
+        Cancel old limit SELL orders and place a new stop loss at updated level.
+        Call periodically (e.g. daily) to trail stops as price moves up.
+        """
+        # Cancel existing SELL orders for this symbol that are at stop-loss level
+        orders = self.get_orders(limit=50)
+        for o in orders:
+            if o.symbol == symbol and o.action == 'SELL' and o.status == 'HELD':
+                self.cancel_order(o.order_id)
+        
+        # Place new stop
+        self.set_stop_loss(symbol, quantity, stop_pct)
+        logger.info(f"  sync_stop_loss: {symbol} stop updated to {stop_pct*100:.0f}%")
 
     def cancel_order(self, order_id: int) -> bool:
         """Cancel an open order by global order ID."""

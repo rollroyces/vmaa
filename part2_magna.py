@@ -32,9 +32,9 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from config import P2C
-from models import Part1Result, Part2Signal
-from part1_fundamentals import get_price_from_info
+from vmaa.config import P2C
+from vmaa.models import Part1Result, Part2Signal
+from vmaa.part1_fundamentals import get_price_from_info
 
 logger = logging.getLogger("vmaa.part2")
 
@@ -562,6 +562,20 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
         magna_score += price_momentum
         trigger_signals.append(f'PM({price_momentum:.1f})')
 
+    # ── V3 Momentum Filter: 1-month return (don't catch falling knives) ──
+    momentum_filter_pass = True
+    mom_1m = 0.0
+    if hist is not None and len(hist) >= 21:
+        price_1m_ago = float(hist['Close'].iloc[-21])
+        price_now_mom = float(hist['Close'].iloc[-1])
+        if price_1m_ago > 0:
+            mom_1m = (price_now_mom - price_1m_ago) / price_1m_ago
+            min_1m = P2C.magna_entry_min_1m_return
+            momentum_filter_pass = mom_1m > min_1m
+            details['mom_1m'] = round(mom_1m, 4)
+            if not momentum_filter_pass:
+                trigger_signals.append(f'⚠MOM({mom_1m:.1%})')
+
     # ── G: Gap Up ──
     g_pass, g_vol_ok, gap_pct, gap_vol = _check_gap_up(hist, info)
     # Only award points and trigger if BOTH gap AND volume conditions met
@@ -605,17 +619,25 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
     # ── Composite ──
     magna_score = round(min(magna_score, 10), 1)
 
-    # ── Entry Trigger Logic (graduated) ──
-    # Entry ready if: (growth composite >= 2.5) or gap confirmed or both M+A binary
+    # ── Entry Trigger Logic (V3 rewritten) ──
+    # V3 rules:
+    #   - G + volume confirmed → instant entry
+    #   - M+A + at least 1 bonus (N, SI≥1, or analyst upgraded) → entry
+    #   - Must pass momentum filter (1m return > -5%)
     growth_composite = eps_score + sales_score + price_momentum
-    entry_ready = False
-    if g_full_pass:
-        entry_ready = True  # Gap-up WITH premarket volume confirmation
-    elif m_pass and a_pass:
-        entry_ready = True  # Fundamental acceleration trigger
-    elif growth_composite >= 2.5:
-        entry_ready = True  # Strong graduated growth signal
     details['growth_composite'] = round(growth_composite, 1)
+
+    has_bonus = (n_pass or si_score >= 1 or upgraded_pass)
+    entry_ready = False
+
+    if not momentum_filter_pass:
+        entry_ready = False  # V3: momentum filter blocks all entries
+    elif g_full_pass:
+        entry_ready = True   # Gap-up WITH volume confirmation
+    elif m_pass and a_pass and has_bonus:
+        entry_ready = True   # V3: M+A PLUS at least 1 bonus signal required
+    elif growth_composite >= 2.5:
+        entry_ready = True   # Strong graduated growth signal (legacy fallback)
 
     if magna_score < P2C.magna_pass_threshold and not entry_ready:
         return None
@@ -652,4 +674,5 @@ def _evaluate_magna(ticker: str, info: dict, hist: pd.DataFrame,
         trigger_signals=trigger_signals,
         entry_ready=entry_ready,
         signal_date=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        magna_momentum_filter=momentum_filter_pass,
     )

@@ -22,7 +22,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from config import RC
+from vmaa.config import RC
 
 try:
     from models import MarketRegime
@@ -39,81 +39,49 @@ def compute_stops_adaptive(
     market: Optional[object] = None,
 ) -> Tuple[float, str]:
     """
-    Adaptive statistical stop loss.
+    ATR-based adaptive stop loss (V3 redesign).
 
-    Adjusts stop distance dynamically based on:
-      1. Price level (low-price = more noise = wider stop)
-      2. Stock volatility (high ATR% = wider stop)
-      3. Proximity to 52w low (near low = more room for bounce)
-      4. Market volatility regime (high vol = wider stop)
-
-    Always picks the MEDIAN of 3 computed stops for balance.
+    V3 changes:
+      - Hard stop = max(12%, 2 * ATR%). Dynamically adjusts to volatility.
+      - No more static hard stop based on price level.
+      - Trailing stop = 0.5 * ATR (from high watermark).
+      - Structural stop (52w low) kept as absolute floor.
 
     Returns: (stop_price, stop_type)
     """
     atr = compute_atr(hist, 14)
     atr_pct = atr / entry_price if entry_price > 0 else 0.03
 
-    # ── 1. Dynamic ATR multiplier ──
-    base_mult = float(RC.atr_stop_multiplier)  # hardcoded; actual value from RC.atr_stop_multiplier (default 2.0)
+    # ── V3 Hard Stop: max(12%, 2 * ATR%) ──
+    atr_based_stop_pct = max(0.12, 2.0 * atr_pct)  # min 12%, wider for volatile stocks
 
-    # Price level: low-price stocks are noisier, need wider stops
-    if entry_price < 10:
-        base_mult += 1.0   # +40% wider
-    elif entry_price < 30:
-        base_mult += 0.5   # +20% wider
+    # Cap at 30% max stop (no stock should have >30% hard stop)
+    atr_based_stop_pct = min(atr_based_stop_pct, 0.30)
 
-    # Volatility: high ATR% means more daily noise
-    if atr_pct > 0.05:
-        base_mult += 0.5
-    elif atr_pct > 0.03:
-        base_mult += 0.25
-
-    # Proximity to 52w low: near bottom → need room for bounce
-    ptl = entry_price / low_52w if low_52w > 0 else 1.0
-    if ptl < 1.05:
-        base_mult += 1.0  # Very close to 52w-low — max breathing room
-    elif ptl < 1.10:
-        base_mult += 0.5
-
-    # Market regime: high volatility = wider stops
+    # Market regime adjustment
     if market is not None:
         vol_regime = getattr(market, 'vol_regime', 'NORMAL')
         if vol_regime == 'HIGH':
-            base_mult += 0.5
+            atr_based_stop_pct = min(atr_based_stop_pct * 1.15, 0.30)
         elif vol_regime == 'EXTREME':
-            base_mult += 1.0
+            atr_based_stop_pct = min(atr_based_stop_pct * 1.25, 0.30)
 
-    atr_stop = round(entry_price - (atr * base_mult), 2) if atr > 0 else 0
+    hard_stop = round(entry_price * (1 - atr_based_stop_pct), 2)
 
-    # ── 2. Dynamic hard stop % ──
-    # FIXED R:R (2026-05-08): tighter stops across all price levels
-    if entry_price < 10:
-        hard_pct = 0.18    # 18% for sub-$10 (was 22%)
-    elif entry_price < 30:
-        hard_pct = 0.15    # 15% for small-mid caps (was 18%)
-    else:
-        hard_pct = float(RC.hard_stop_pct)  # 15% standard
-
-    hard_stop = round(entry_price * (1 - hard_pct), 2)
-
-    # ── 3. Structural stop (52w low) ──
+    # ── Structural stop (52w-low floor) ──
     structural_stop = round(low_52w * 0.98, 2)
 
-    # ── 4. Pick the MEDIAN stop ──
-    candidates = [
-        (atr_stop, "ATR_adaptive"),
-        (hard_stop, "Hard_adaptive"),
-        (structural_stop, "Structural"),
-    ]
-    candidates = [(s, n) for s, n in candidates if 0 < s < entry_price]
-
-    if not candidates:
-        return round(entry_price * 0.95, 2), "Fallback"
-
-    candidates.sort(key=lambda x: x[0])  # ascending price
-    median_idx = len(candidates) // 2
-    return candidates[median_idx]
+    # ── Pick the HIGHER of hard_stop and structural (gives more breathing room) ──
+    # We want the stop that's closer to entry (higher price) for tighter risk control
+    # But structural_stop being below hard_stop means it's too far — use hard_stop
+    if structural_stop > hard_stop:
+        # Structural is tighter than ATR — use structural
+        return structural_stop, "Structural_ATR"
+    elif hard_stop < entry_price * 0.70:
+        # Floor: never let stop go below 30% drawdown
+        return round(entry_price * 0.70, 2), "ATR_Floor"
+    else:
+        return hard_stop, f"ATR_adaptive({atr_based_stop_pct:.0%})"
 
 
 # ═══════════════════════════════════════════════════════════════════

@@ -28,8 +28,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from config import P1C
-from models import Part1Result
+from vmaa.config import P1C
+from vmaa.models import Part1Result
 try:
     from data.cache import cache_get as _cache_get, cache_set as _cache_set
     _CACHE_AVAILABLE = True
@@ -68,7 +68,14 @@ def screen_fundamentals(ticker: str, sector_medians: dict = None,
             if not info:
                 yf_ok = False
 
-        # Try yfinance first (if no prefetched or prefetched info empty)
+        # 🏎️ Check cache before yfinance (avoid rate-limit slow fails)
+        if not info and _CACHE_AVAILABLE:
+            cached_info = _cache_get(ticker.upper(), 'fundamentals')
+            if cached_info and cached_info.get('regularMarketPrice', 0) > 0:
+                info = cached_info
+                logger.debug(f"  {ticker}: Using cached fundamentals (skip yfinance)")
+
+        # Try yfinance first (if no prefetched or cached, or cached empty)
         if not info:
             try:
                 t = yf.Ticker(ticker)

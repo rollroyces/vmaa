@@ -25,10 +25,10 @@ import yfinance as yf
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 # Reuse VMAA MAGNA Part 2
-from part2_magna import screen_magna as part2_screen
-from part2_magna import check_earnings_accel, check_sales_accel
-from models import Part1Result
-from config import RC
+from vmaa.part2_magna import screen_magna as part2_screen
+from vmaa.part2_magna import check_earnings_accel, check_sales_accel
+from vmaa.models import Part1Result
+from vmaa.config import RC
 
 logging.basicConfig(
     level=logging.INFO,

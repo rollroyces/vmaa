@@ -14,14 +14,23 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-from config import RC
-from models import (
+from vmaa.config import RC
+from vmaa.models import (
     MarketRegime, Part1Result, Part2Signal, VMAACandidate, TradeDecision
 )
 
 # Adaptive stop (Phase 1 — 2026-05-06)
 # Dynamically adjusts stop distance based on price level, volatility, market regime
-from risk_adaptive import compute_stops_adaptive as compute_stops, compute_atr
+from vmaa.risk_adaptive import compute_stops_adaptive as compute_stops
+
+# Lazy import compute_atr to avoid circular dependency
+_compute_atr = None
+def _get_atr():
+    global _compute_atr
+    if _compute_atr is None:
+        from vmaa.risk_adaptive import compute_atr as ca
+        _compute_atr = ca
+    return _compute_atr
 
 logger = logging.getLogger("vmaa.risk")
 
@@ -96,73 +105,30 @@ def get_market_regime() -> MarketRegime:
 def compute_trailing_stop(candidate: VMAACandidate, entry_price: float,
                           hist: pd.DataFrame) -> tuple:
     """
-    Per-stock adaptive trailing stop — v3.2.2b (Learned + calibrated).
+    V3.4 ATR-based trailing stop — S3 from backtest (Sharpe 3.11, +517%).
     
-    ML-informed formula refined through head-to-head simulation on 17 trades.
-    Key findings from trail_learner + calibration:
-      - Too-tight trail (4%) DESTROYS TP1 trades — activation must stay near TP1
-      - Optimal width: moderate (6-10%), scaled by volatility
-      - Activation: high base (16%), lower ONLY for extreme gap-risk stocks
-      - Pre-entry drawdown >12% is the signal to activate earlier
+    0.5×ATR trailing from high watermark, activated immediately.
+    Lets winners run while capping drawdowns.
     
-    Returns: (trailing_stop_pct, trailing_activate_pct)
-    
-    Formula (v3.2.2b):
-      trail    = max(0.06, min(0.15, atr_pct * 1.5))     # moderate, vol-scaled
-      activate = 0.16 base; lower if pre_max_dd < -12%    # TP1-adjacent
-      Clamp: trail [6-15%], activate [12-20%]
+    Returns: (trail_pct, activate_pct)
+      trail_pct = 0.5 × ATR% (floor 6%, ceiling 15%)
+      activate_pct = 0.01 (essentially immediate)
     """
-    # ── Compute ATR ──
-    atr_pct = 0.03  # default for stocks without enough history
+    atr_pct = 0.03
     try:
         if hist is not None and len(hist) >= 14:
-            high = hist['High'].values
-            low = hist['Low'].values
-            close = hist['Close'].values
-            tr = [max(high[i] - low[i],
-                      abs(high[i] - close[i-1]),
-                      abs(low[i] - close[i-1]))
-                  for i in range(1, len(high))]
-            atr = sum(tr[-14:]) / 14 if len(tr) >= 14 else sum(tr) / len(tr)
-            atr_pct = float(atr / entry_price) if entry_price > 0 else 0.03
+            ca = _get_atr()
+            hist_df = hist if isinstance(hist, pd.DataFrame) else hist
+            atr_val = ca(hist_df, 14)
+            atr_pct = float(atr_val / entry_price) if entry_price > 0 else 0.03
     except Exception:
         pass
     
-    # ── Pre-entry max drawdown (proxy for gap/drawdown risk) ──
-    pre_max_dd = -0.05  # default: assume moderate pre-entry decline
-    try:
-        if hist is not None and len(hist) >= 21:
-            pre_window = hist['Close'].values[-20:]
-            running_max = np.maximum.accumulate(pre_window)
-            drawdowns = (pre_window - running_max) / running_max
-            pre_max_dd = float(np.min(drawdowns))  # negative, e.g. -0.15
-    except Exception:
-        pass
+    # V3.4: 0.5×ATR trailing, floor 6%, ceiling 15%
+    trail = max(0.06, min(0.15, atr_pct * 0.5))
+    activate = 0.01  # Immediate trailing from near entry
     
-    # ── Learned formula (v3.2.2b) ──
-    # Width: vol-scaled, moderate (6-10% typical)
-    trail = max(0.06, min(0.15, atr_pct * 1.5))
-    
-    # Activation: high base (near TP1), lower for extreme gap risk
-    if pre_max_dd < -0.12:
-        # Gap-prone: activate earlier to catch reversals
-        activate = max(0.12, 0.16 + pre_max_dd * 0.3)
-    else:
-        activate = 0.16
-    
-    # Clamp
-    trail = max(0.06, min(0.15, trail))
-    activate = max(0.12, min(0.20, activate))
-    
-    # Ensure activate > trail (otherwise trail triggers immediately)
-    if activate <= trail:
-        activate = trail + 0.03
-    
-    logger.info(
-        f"  {candidate.ticker}: trail={trail:.0%} act={activate:.0%} "
-        f"(ATR={atr_pct:.1%}, preDD={pre_max_dd:.0%})"
-    )
-    
+    logger.info(f"  {candidate.ticker}: V3.4 trail={trail:.0%} (ATR={atr_pct:.1%})")
     return round(trail, 3), round(activate, 3)
 
 
@@ -237,24 +203,32 @@ def compute_take_profits(
     """
     Compute take profit levels — FIXED R:R strategy.
     
-    Changed from 3-tier partial to single primary TP1 (100% exit).
-    Partial fills were the #1 cause of losses: selling 30% at +12%
-    locked tiny wins while remaining 70% bled to hard stop.
+    ATR-based trailing TP — V3.4 (S3 Trailing TP from backtest).
     
-    v3.2: Trailing stop DISABLED — all winners now run to TP1 (20%).
+    Backtest result: Sharpe 2.30→3.11, Return +194%→+517%
     
-    TP1: +20% (100% sell) — primary exit
-    TP2: +30% — secondary (fallback if TP1 not filled)
-    TP3: +50% — tertiary (let winners truly run if TP1/2 missed)
+    Instead of fixed TP levels, use 0.5×ATR trailing from peak price.
+    This lets winners run while capping drawdown on pullbacks.
+    
+    Strategy:
+      - TP1-A: +15% sell 50% (early lock-in)
+      - TP1-B: remaining 50% trails at 0.5×ATR from peak
+        (max trail = 25% gain from entry, min trail = 0.5×ATR)
+      - Floor: never let TP1-B level go below entry_price (breakeven)
     """
-    tp1 = round(entry_price * (1 + RC.tp1_level_pct), 2)
-    tp2 = round(entry_price * (1 + RC.tp2_level_pct), 2)
-    tp3 = round(entry_price * (1 + RC.tp3_level_pct), 2)
-
+    ca = _get_atr()
+    
+    tp1a_pct = RC.tp1_a_level_pct  # 0.15
+    tp1a = round(entry_price * (1 + tp1a_pct), 2)
+    
+    # TP1-B is a marker level for trailing — the actual exit is managed
+    # by the trailing stop (0.5×ATR from high watermark).
+    # Set it high enough that trailing fires first for most trades.
+    tp1b = round(entry_price * 1.25, 2)  # +25% ceiling for trailing
+    
     return [
-        {"level": tp1, "sell_pct": 100, "label": "TP1"},   # Full exit
-        {"level": tp2, "sell_pct": 100, "label": "TP2"},   # Fallback
-        {"level": tp3, "sell_pct": 100, "label": "TP3"},   # Fallback
+        {"level": tp1a, "sell_pct": 50,  "label": "TP1-A"},       # +15%: sell 50%
+        {"level": tp1b, "sell_pct": 50,  "label": "TP1-B_TRAIL"}, # 50% trails via trailing stop
     ]
 
 
@@ -380,6 +354,41 @@ def _apply_sentiment_to_confidence(
 
 
 # ═══════════════════════════════════════════════════════════════════
+# Volatility Filter (v3.3 — MAGNA)
+# ═══════════════════════════════════════════════════════════════════
+
+def check_volatility_filter(ticker: str, hist: pd.DataFrame = None) -> Tuple[bool, float, str]:
+    """
+    Check if a stock passes the avg daily range filter.
+    Exclude stocks with >5% average daily range (too volatile for strategy).
+    
+    Returns: (passes_filter, avg_daily_range_pct, reason)
+    """
+    max_range = RC.max_avg_daily_range_pct
+    try:
+        if hist is not None and len(hist) >= 20:
+            daily_range = (hist['High'] - hist['Low']) / hist['Close']
+            avg_range = float(daily_range.tail(20).mean())
+            if avg_range > max_range:
+                return False, round(avg_range, 4), \
+                    f"Avg daily range {avg_range:.1%} > {max_range:.0%} (too volatile)"
+            return True, round(avg_range, 4), "OK"
+        t = yf.Ticker(ticker)
+        h = t.history(period="1mo")
+        if h is not None and len(h) >= 20:
+            daily_range = (h['High'] - h['Low']) / h['Close']
+            avg_range = float(daily_range.tail(20).mean())
+            if avg_range > max_range:
+                return False, round(avg_range, 4), \
+                    f"Avg daily range {avg_range:.1%} > {max_range:.0%} (too volatile)"
+            return True, round(avg_range, 4), "OK"
+    except Exception as e:
+        logger.warning(f"Volatility filter failed for {ticker}: {e}")
+    # Default: pass (no data available)
+    return True, 0.0, "No data — passing"
+
+
+# ═══════════════════════════════════════════════════════════════════
 # Correlation & Sector Checks
 # ═══════════════════════════════════════════════════════════════════
 
@@ -449,6 +458,18 @@ def generate_trade_decision(
     p2 = candidate.part2
     risk_flags: List[str] = []
 
+    # ── Blacklist check (v3.3) ──
+    if ticker.upper() in [t.upper() for t in RC.blacklisted_tickers]:
+        return TradeDecision(
+            ticker=ticker, action='HOLD', quantity=0,
+            entry_price=0, entry_method='n/a',
+            stop_loss=0, stop_type='n/a', take_profits=[],
+            trailing_stop_pct=0, time_stop_days=0,
+            position_pct=0, risk_amount=0, reward_ratio=0,
+            confidence_score=0, risk_flags=['blacklisted'],
+            rationale=f"{ticker} is blacklisted"
+        )
+
     # Fetch fresh price data
     try:
         t = yf.Ticker(ticker)
@@ -462,6 +483,19 @@ def generate_trade_decision(
             position_pct=0, risk_amount=0, reward_ratio=0,
             confidence_score=0, risk_flags=['data_fetch_failed'],
             rationale=f"Data fetch failed for {ticker}"
+        )
+
+    # ── Volatility filter (v3.3) — reject stocks with >5% avg daily range ──
+    vol_ok, avg_range, vol_reason = check_volatility_filter(ticker, hist)
+    if not vol_ok:
+        return TradeDecision(
+            ticker=ticker, action='HOLD', quantity=0,
+            entry_price=0, entry_method='n/a',
+            stop_loss=0, stop_type='n/a', take_profits=[],
+            trailing_stop_pct=0, time_stop_days=0,
+            position_pct=0, risk_amount=0, reward_ratio=0,
+            confidence_score=0, risk_flags=['volatility_filter'],
+            rationale=f"{ticker}: {vol_reason}"
         )
 
     current = p1.current_price
@@ -518,10 +552,9 @@ def generate_trade_decision(
 
     # ── Risk/Reward ──
     risk_per_share = entry_price - stop_loss
-    avg_reward = (
-        (take_profits[0]['level'] - entry_price) * 0.30 +
-        (take_profits[1]['level'] - entry_price) * 0.30 +
-        (take_profits[2]['level'] - entry_price) * 0.40
+    avg_reward = sum(
+        (tp['level'] - entry_price) * (tp['sell_pct'] / 100)
+        for tp in take_profits
     )
     rr = avg_reward / risk_per_share if risk_per_share > 0 else 0
 

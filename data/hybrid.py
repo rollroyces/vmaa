@@ -75,7 +75,7 @@ logger = logging.getLogger("vmaa.data.hybrid")
 
 _TIGER_QC = None
 _TIGER_LOCK = __import__('threading').Lock()
-_TIGER_BARS_EXHAUSTED = False  # Set when Tiger 20-symbol/day bar limit is hit
+_TIGER_BARS_EXHAUSTED = True  # Skip Tiger bars (pool issues), use delay briefs instead
 
 def _get_tiger_qc():
     global _TIGER_QC
@@ -103,7 +103,7 @@ def _get_tiger_qc():
     return _TIGER_QC
 def get_price(ticker: str) -> Tuple[float, int, str, str]:
     """
-    Get current price from Tiger (primary) → yfinance (fallback).
+    Get current price from Tiger (primary) → yfinance (fallback) → Finnhub quote (last resort).
     Returns: (price, volume, source_note, data_date)
     """
     # Try Tiger first
@@ -139,6 +139,21 @@ def get_price(ticker: str) -> Tuple[float, int, str, str]:
         price = float(info.get("regularMarketPrice") or info.get("currentPrice", 0) or 0)
         if price > 0:
             return price, 0, "yf_info", "?"
+    except Exception:
+        pass
+
+    # Final fallback: Finnhub quote (works when yfinance 401s)
+    try:
+        import requests as _req
+        resp = _req.get(
+            f'https://finnhub.io/api/v1/quote?symbol={ticker}&token={_FINNHUB_KEY}',
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            close = float(data.get('c', 0))
+            if close > 0:
+                return close, 0, "finnhub_quote", datetime.now().strftime("%Y-%m-%d")
     except Exception:
         pass
     
@@ -658,6 +673,31 @@ def get_bars_hybrid(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
     except Exception as e:
         logger.debug(f"  {ticker}: yfinance bars failed ({e})")
 
+    # Final fallback: try Finnhub for a minimal price bar (when yfinance 401s)
+    try:
+        import requests as _req
+        resp = _req.get(
+            f'https://finnhub.io/api/v1/quote?symbol={ticker}&token={_FINNHUB_KEY}',
+            timeout=10
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            close = float(data.get('c', 0))
+            high = float(data.get('h', 0))
+            low = float(data.get('l', 0))
+            open_ = float(data.get('o', 0))
+            vol = data.get('v', 0) or int(data.get('volume', 0))
+            if close > 0:
+                # Build minimal single-row DataFrame
+                df = pd.DataFrame({
+                    'Open': [open_ or close], 'High': [high or close],
+                    'Low': [low or close], 'Close': [close], 'Volume': [vol]
+                }, index=pd.DatetimeIndex([datetime.now()]))
+                logger.debug(f"  {ticker}: Finnhub quote fallback")
+                return df
+    except Exception:
+        pass
+
     return None
 
 
@@ -821,8 +861,9 @@ def get_finnhub_fundamentals(ticker: str) -> dict:
     global _FINNHUB_CALL_TIMES
     now = _time.time()
     _FINNHUB_CALL_TIMES = [t for t in _FINNHUB_CALL_TIMES if t > now - 60]
-    if len(_FINNHUB_CALL_TIMES) >= 50:
+    if len(_FINNHUB_CALL_TIMES) >= 55:
         sleep_time = 60 - (now - _FINNHUB_CALL_TIMES[0])
+        sleep_time += __import__('random').uniform(0, 5)  # 0-5s stagger
         if sleep_time > 0:
             _time.sleep(sleep_time)
     _FINNHUB_CALL_TIMES.append(_time.time())

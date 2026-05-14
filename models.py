@@ -108,6 +108,7 @@ class Part2Signal:
     magna_score: float = 0.0             # 0–10 composite score (graduated, half-point increments)
     trigger_signals: List[str] = field(default_factory=list)  # Which signals fired
     entry_ready: bool = False            # True when G or MA triggers fire
+    magna_momentum_filter: bool = False  # V3: passed 1m return > -5% filter
 
     # Data freshness
     signal_date: str = ""                # When signal was detected

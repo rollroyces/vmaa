@@ -39,11 +39,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import yfinance as yf
 
-from models import VMAACandidate, TradeDecision
-from config import PC, P1C, P2C, RC as RiskCfg
+from vmaa.models import VMAACandidate, TradeDecision
+from vmaa.config import PC, P1C, P2C, RC as RiskCfg
 
-from part1_fundamentals import batch_screen as part1_batch
-from part2_magna import batch_screen_magna as part2_batch
+from vmaa.part1_fundamentals import batch_screen as part1_batch
+from vmaa.part2_magna import batch_screen_magna as part2_batch
 from part2b_vcp import (
     batch_vcp_filter, apply_vcp_to_stop, apply_vcp_to_confidence,
     apply_vcp_to_position_size, get_vcp_entry_quality,
@@ -630,6 +630,16 @@ def run_full_pipeline(
     logger.info("=" * 70)
     logger.info(f"VMAA 2.0 PIPELINE — {'DRY RUN' if dry_run else 'LIVE'} — {start_time}")
     logger.info("=" * 70)
+
+    # ── Data Source Health Check ──
+    try:
+        from vmaa.data.hybrid import yfinance_available
+        if not yfinance_available():
+            logger.warning("⚠️  yfinance rate-limited/unavailable — fallbacks: SEC EDGAR + Finnhub + Tiger")
+        else:
+            logger.info("✅  yfinance available")
+    except Exception:
+        pass
 
     # ── Market Regime ──
     logger.info("\n[Market] Assessing regime...")

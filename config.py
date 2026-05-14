@@ -114,7 +114,7 @@ class Part2Config:
 
     # ── G: Gap Up ──
     gap_min_pct: float = 0.04                 # Gap ≥ 4%
-    gap_volume_multiplier: float = 1.5        # Gap day volume must be ≥ 1.5x 20-day avg
+    gap_volume_multiplier: float = 2.0        # Gap day volume must be ≥ 2.0x 20-day avg (V3)
     gap_min_volume: int = 100000              # Absolute: gap day volume ≥ 100K shares
     gap_lookback_days: int = 20               # Look back 20 trading days
 
@@ -132,26 +132,29 @@ class Part2Config:
     analyst_count_min: int = 3                # At least 3 analysts
     analyst_target_premium_pct: float = 0.15  # Target ≥ 15% above current price
 
-    # ── Cap 10: Market Cap — 硬上限 $10B ──
-    max_market_cap: float = 10e9              # $10B ceiling
-    large_cap_enabled: bool = False           # Tightened: Cap 10 hard limit, no large_cap exceptions
+    # ── Cap 10: Market Cap — V3 expanded to $50B ──
+    max_market_cap: float = 50e9              # $50B ceiling (V3: 500M-50B range)
+    large_cap_enabled: bool = False           # Tightened: Cap 50B hard limit, no large_cap exceptions
 
-    # ── 10: IPO Tenure — 硬上限 10 年 ──
-    max_ipo_years: float = 10.0               # Listed ≤ 10 years
-    ipo_hard_requirement: bool = True          # Tightened: hard reject if IPO > 10yr
+    # ── 10: IPO Tenure — V3 expanded to 20 年 ──
+    max_ipo_years: float = 20.0               # Listed ≤ 20 years (V3: was 10yr)
+    ipo_hard_requirement: bool = True          # Tightened: hard reject if IPO > 20yr
 
-    # ── Scoring ──
+    # ── Scoring (V3 re-weighted) ──
     magna_points: dict = field(default_factory=lambda: {
         'm_earnings_accel': 2,
         'a_sales_accel': 2,
-        'g_gap_up': 2,
-        'n_neglect_base': 1,
-        'short_interest': 2,                  # 0/1/2 based on threshold
+        'g_gap_up': 3,                        # V3: 2→3 — gap is strongest signal
+        'n_neglect_base': 2,                   # V3: 1→2 — base pattern gets more weight
+        'short_interest': 1,                   # V3: 2→1 — less weight on squeeze
         'analyst_upgrades': 1,
         'cap_under_10b': 0,                   # Hard prerequisite, not scored
         'ipo_within_10yr': 0,                 # Hard prerequisite, not scored
     })
-    magna_pass_threshold: int = 4             # Minimum MAGNA score — tightened from 3
+    magna_pass_threshold: int = 5             # Minimum MAGNA score — V3: 4→5
+
+    # ── Entry Filters (V3) ──
+    magna_entry_min_1m_return: float = -0.05  # V3: don't catch falling knives, 1m return > -5%
 
     # ── Entry Triggers ──
     # Entry is triggered when G (Gap) OR both M+A fire simultaneously
@@ -169,17 +172,23 @@ class Part2Config:
 class RiskConfig:
     """Comprehensive risk management parameters."""
 
-    # Portfolio-level — WIDE_STOP strategy
-    max_positions: int = 5
+    # Portfolio-level — OPTION_C v3 (MAGNA-optimized)
+    max_positions: int = 4                  # V3: 3→4, more concurrent positions
     max_positions_per_sector: int = 2
     cash_reserve_pct: float = 0.15
     max_portfolio_heat: float = 0.70
     max_daily_loss_pct: float = 0.03
     max_correlation: float = 0.70
 
+    # Blacklist — stocks that fail risk regardless of signal
+    blacklisted_tickers: List[str] = field(default_factory=lambda: ['TSLA'])
+
+    # Universe volatility filter — exclude stocks with >6% avg daily range (V3: was 5%)
+    max_avg_daily_range_pct: float = 0.06
+
     # Position-level
     max_position_pct: float = 0.18
-    kelly_fraction: float = 0.15
+    kelly_fraction: float = 0.12            # V3: 0.08→0.12, higher bet sizing
     min_position_size: float = 500.0
     max_position_size: float = 80000.0
 
@@ -192,25 +201,28 @@ class RiskConfig:
     require_volume: bool = True
     min_avg_volume: int = 50000
 
-    # Stop management — FIXED R:R v3.2
-    # Core fix: inverted R:R (risk 25%→make 15%) is mathematically broken
-    # New: risk 15%→make 20% = R:R 1:1.33, breakeven WR = 42.9%
-    # Small-cap (<$2B): risk 12%→make 18% = R:R 1:1.5, breakeven WR = 40%
-    # v3.2: Trailing stop DISABLED — was killing 6/10 wins before TP1
-    #       Set trailing_stop_pct high (0.99) to effectively disable
-    atr_stop_multiplier: float = 2.0            # Tighter ATR stop (was 3.0)
-    hard_stop_pct: float = 0.15                 # 15% hard stop — FIXED from 25%
-    trailing_stop_pct: float = 0.12              # Base 12% trail — overridden per-stock by compute_trailing_stop()
-    trailing_activate_after: float = 0.15       # 15% activate  — per-stock adaptive (v3.2.1)
+    # Stop management — ATR-BASED v3
+    # V3: Hard stop = max(12%, 2*ATR). Trailing from high watermark.
+    # No more static hard stop — stops dynamically adjust to volatility.
+    atr_stop_multiplier: float = 2.0            # ATR multiplier for hard stop
+    hard_stop_pct: float = 0.12                 # Floor: hard stop never tighter than 12%
+    trailing_stop_pct: float = 0.10              # Trailing stop = 0.5 * ATR from high watermark
+    trailing_activate_after: float = 0.10        # Activate trailing stop after 10% gain (was 15%)
     time_stop_days: int = 9999                  # No time limit — let trades play out
     # Small-cap specific (<$2B market cap)
     small_cap_max_market_cap: float = 2e9       # $2B threshold
     small_cap_hard_stop_pct: float = 0.12       # 12% stop for small caps
     small_cap_tp1_pct: float = 0.18             # 18% TP1 for small caps
 
-    # Take Profit — FULL EXIT at first target (no partial fills)
-    # Partial fills were the #1 cause of losses in backtesting
-    tp1_level_pct: float = 0.20                # TP1: +20% (was 15% — FIXED R:R)
+    # Take Profit — REBALANCED R:R v3
+    # TP: 25%, SL: max(12%, 2*ATR). R:R ~ 1:2 (favorable).
+    # Split TP: 50% at +15%, 50% at +25%
+    tp1_a_level_pct: float = 0.15              # TP1-A: +15% (50% sell) — V3: 10%→15%
+    tp1_a_sell_pct: int = 50                   # Sell 50% at TP1-A
+    tp1_b_level_pct: float = 0.25              # TP1-B: +25% (50% sell) — V3: 20%→25%
+    tp1_b_sell_pct: int = 50                   # Sell 50% at TP1-B
+    # Legacy — used by non-MAGNA strategies
+    tp1_level_pct: float = 0.20                # TP1: +20%
     tp2_level_pct: float = 0.30                # TP2: +30%
     tp3_level_pct: float = 0.50                # TP3: +50%
 
