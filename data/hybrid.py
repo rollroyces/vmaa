@@ -103,7 +103,7 @@ def _get_tiger_qc():
     return _TIGER_QC
 def get_price(ticker: str) -> Tuple[float, int, str, str]:
     """
-    Get current price from Tiger (primary) → yfinance (fallback) → Finnhub quote (last resort).
+    Get current price from Tiger (primary) → yfinance (fallback) → YahooDirect (fallback 2) → Finnhub quote (last resort).
     Returns: (price, volume, source_note, data_date)
     """
     # Try Tiger first
@@ -120,7 +120,7 @@ def get_price(ticker: str) -> Tuple[float, int, str, str]:
         except Exception:
             pass
     
-    # Fallback: yfinance history
+    # Fallback 1: yfinance history
     try:
         t = yf.Ticker(ticker)
         hist = t.history(period="3mo")
@@ -132,17 +132,25 @@ def get_price(ticker: str) -> Tuple[float, int, str, str]:
     except Exception:
         pass
     
-    # Last resort: yfinance info
+    # Fallback 2: YahooDirect (bypasses yfinance rate-limit via direct Yahoo Chart API)
     try:
-        t = yf.Ticker(ticker)
-        info = t.info
-        price = float(info.get("regularMarketPrice") or info.get("currentPrice", 0) or 0)
-        if price > 0:
-            return price, 0, "yf_info", "?"
+        from data.yahoo_direct import YahooDirect as _YD
+        yd = _YD(delay=0.08)
+        # Get price from chart API
+        hist = yd.get_history(ticker, period="3mo")
+        if hist is not None and len(hist) >= 2:
+            close = float(hist["Close"].iloc[-1])
+            vol = int(hist["Volume"].iloc[-1])
+            date = hist.index[-1].strftime("%Y-%m-%d")
+            return close, vol, "yahoo_direct_hist", date
+        # Fallback within fallback: just the price
+        price = yd.get_price(ticker)
+        if price and price > 0:
+            return price, 0, "yahoo_direct_price", datetime.now().strftime("%Y-%m-%d")
     except Exception:
         pass
-
-    # Final fallback: Finnhub quote (works when yfinance 401s)
+    
+    # Last resort: Finnhub quote (works when everything else fails)
     try:
         import requests as _req
         resp = _req.get(
@@ -199,8 +207,9 @@ def get_prices_batch(tickers: List[str]) -> Dict[str, Tuple[float, int, str, str
 
 def get_52w_range(ticker: str) -> Tuple[float, float]:
     """
-    Get 52-week high/low from yfinance history.
+    Get 52-week high/low from yfinance history → YahooDirect fallback.
     """
+    # Primary: yfinance
     try:
         t = yf.Ticker(ticker)
         hist = t.history(period="1y")
@@ -208,6 +217,17 @@ def get_52w_range(ticker: str) -> Tuple[float, float]:
             return float(hist["Low"].min()), float(hist["High"].max())
     except Exception:
         pass
+
+    # Fallback: YahooDirect
+    try:
+        from data.yahoo_direct import YahooDirect as _YD
+        yd = _YD(delay=0.08)
+        lo, hi = yd.get_52w_range(ticker)
+        if lo > 0 and hi > 0:
+            return lo, hi
+    except Exception:
+        pass
+
     return 0.0, 0.0
 
 
@@ -657,6 +677,7 @@ def get_bars_hybrid(ticker: str, period: str = "1y") -> Optional[pd.DataFrame]:
                 logger.debug(f"  {ticker}: Tiger bars failed ({e}), trying yfinance")
 
     # Fallback: yfinance history
+    # Note: yfinance 1.3.0 manages its own curl_cffi session automatically
     try:
         t = yf.Ticker(ticker)
         hist = t.history(period=period)
@@ -813,7 +834,8 @@ def get_fundamentals_tiger(ticker: str) -> dict:
 
 def yfinance_available() -> bool:
     """Quick check if yfinance is currently working (not rate-limited).
-    Uses SPY as a proxy — the most liquid and reliable ticker."""
+    Uses SPY as a proxy — the most liquid and reliable ticker.
+    Note: yfinance 1.3.0 manages its own curl_cffi session automatically."""
     try:
         t = yf.Ticker('SPY')
         info = t.info

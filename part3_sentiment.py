@@ -140,10 +140,27 @@ def _get_vader():
 # ═══════════════════════════════════════════════════════════════════
 
 def _analyst_sentiment(ticker: str) -> Dict[str, Any]:
+    info = {}
+    # Primary: yfinance
     try:
         import yfinance as yf
         t = yf.Ticker(ticker)
-        info = t.info
+        info = t.info or {}
+    except Exception:
+        pass
+    
+    # Fallback: YahooDirect (bypasses yfinance rate-limit)
+    if not info or not info.get('recommendationKey'):
+        try:
+            from data.yahoo_direct import YahooDirect
+            yd = YahooDirect(delay=0.08)
+            yd_info = yd.get_info(ticker)
+            if yd_info:
+                info = {**yd_info, **info}  # merge, yfinance values take priority
+        except Exception:
+            pass
+    
+    try:
         recommendation = info.get('recommendationKey', '').lower()
         analyst_count = info.get('numberOfAnalystOpinions', 0) or 0
         target_mean = info.get('targetMeanPrice', 0) or 0
@@ -156,8 +173,6 @@ def _analyst_sentiment(ticker: str) -> Dict[str, Any]:
             upside = (target_mean - current) / current
         upside_adj = np.clip(upside / 0.20 * 0.30, -0.30, 0.30)
         score = rec_score * 0.70 + upside_adj
-        # Square-root decay: gentler penalty for small analyst coverage.
-        # count=1 → 0.58x, count=2 → 0.82x, count=3 → 1.0x
         if analyst_count < 3:
             score *= min(1.0, (analyst_count / 3) ** 0.5)
         score = round(np.clip(score, -1.0, 1.0), 3)
@@ -394,9 +409,22 @@ def _reddit_api(ticker: str) -> Optional[Dict[str, Any]]:
 
 
 def _social_fallback(ticker: str) -> Dict[str, Any]:
+    info = {}
     try:
         import yfinance as yf
-        info = yf.Ticker(ticker).info
+        info = yf.Ticker(ticker).info or {}
+    except Exception:
+        pass
+    
+    if not info:
+        try:
+            from data.yahoo_direct import YahooDirect
+            yd = YahooDirect(delay=0.08)
+            info = yd.get_info(ticker) or {}
+        except Exception:
+            pass
+    
+    try:
         held_inst = info.get('heldPercentInstitutions', 0) or 0
         short_pct = info.get('shortPercentOfFloat', 0) or 0
         inst_score = 0.3 if held_inst > 0.7 else (0.1 if held_inst > 0.4 else (-0.2 if held_inst < 0.2 else 0.0))
@@ -425,11 +453,25 @@ def _detect_trend(mentions: List[Dict]) -> str:
 # ═══════════════════════════════════════════════════════════════════
 
 def _technical_sentiment(ticker: str) -> Dict[str, Any]:
+    hist = None
     try:
         import yfinance as yf
         t = yf.Ticker(ticker)
         hist = t.history(period="3mo")
-        if len(hist) < 20:
+    except Exception:
+        pass
+    
+    # Fallback: YahooDirect
+    if hist is None or len(hist) < 20:
+        try:
+            from data.yahoo_direct import YahooDirect
+            yd = YahooDirect(delay=0.08)
+            hist = yd.get_history(ticker, period="3mo")
+        except Exception:
+            pass
+    
+    try:
+        if hist is None or len(hist) < 20:
             return {'score': 0.0}
         close = hist['Close']
         volume = hist['Volume']
@@ -459,9 +501,20 @@ def _technical_sentiment(ticker: str) -> Dict[str, Any]:
 # ═══════════════════════════════════════════════════════════════════
 
 def _insider_sentiment(ticker: str) -> Dict[str, Any]:
+    info = {}
     try:
         import yfinance as yf
-        info = yf.Ticker(ticker).info
+        info = yf.Ticker(ticker).info or {}
+    except Exception:
+        pass
+    if not info:
+        try:
+            from data.yahoo_direct import YahooDirect
+            yd = YahooDirect(delay=0.08)
+            info = yd.get_info(ticker) or {}
+        except Exception:
+            pass
+    try:
         insider_pct = info.get('heldPercentInsiders', 0) or 0
         inst_pct = info.get('heldPercentInstitutions', 0) or 0
         iscore = 0.3 if insider_pct > 0.15 else (0.1 if insider_pct > 0.05 else (-0.1 if insider_pct < 0.01 else 0.0))

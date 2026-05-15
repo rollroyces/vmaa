@@ -495,6 +495,8 @@ def batch_vcp_filter(
     """
     import yfinance as yf
     import time
+    from data.yahoo_direct import YahooDirect
+    _vcp_yd = YahooDirect(delay=0.08)
 
     results = {}
 
@@ -513,13 +515,17 @@ def batch_vcp_filter(
         if hist_cache and ticker in hist_cache:
             hist = hist_cache[ticker]
         else:
+            # Primary: yfinance
             try:
                 stock = yf.Ticker(ticker)
                 hist = stock.history(period="1y")
                 time.sleep(0.15)  # Rate limit
-            except Exception as e:
-                logger.warning(f"{ticker}: yfinance fetch failed: {e}")
-                continue
+            except Exception:
+                hist = None
+
+            # Fallback: YahooDirect (bypasses yfinance rate limits)
+            if hist is None or len(hist) < config.min_history_days:
+                hist = _vcp_yd.get_history(ticker, period="1y")
 
         if hist is None or len(hist) < config.min_history_days:
             logger.debug(f"{ticker}: insufficient data for VCP")
@@ -621,8 +627,17 @@ def quick_vcp_check(ticker: str) -> Optional[VCPResult]:
         hist = stock.history(period="1y")
         price = float(hist["Close"].iloc[-1])
         return analyze_vcp(ticker, hist, price)
-    except Exception as e:
-        logger.error(f"quick_vcp_check({ticker}): {e}")
+    except Exception:
+        # Fallback: YahooDirect
+        try:
+            from data.yahoo_direct import YahooDirect
+            yd = YahooDirect(delay=0.08)
+            hist = yd.get_history(ticker, period="1y")
+            if hist is not None and len(hist) > 20:
+                price = float(hist["Close"].iloc[-1])
+                return analyze_vcp(ticker, hist, price)
+        except Exception as e2:
+            logger.error(f"quick_vcp_check({ticker}): both yfinance and YahooDirect failed: {e2}")
         return None
 
 

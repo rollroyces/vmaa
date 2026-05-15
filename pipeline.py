@@ -35,9 +35,37 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 # Add current dir to path
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+_PARENT = Path(__file__).resolve().parent.parent  # workspace root
+if str(_PARENT) not in sys.path:
+    sys.path.insert(0, str(_PARENT))
+_PKG = Path(__file__).resolve().parent  # vmaa/
+if str(_PKG) not in sys.path:
+    sys.path.insert(1, str(_PKG))
 
+# ── Import yfinance via our direct-Yahoo-API patch (reliable even when yfinance 401s) ──
+# The yahoo_direct module monkey-patches yfinance.Ticker.info and yfinance.download
+# to fall through to direct Yahoo Chart API calls when yfinance is rate-limited.
 import yfinance as yf
+from data.yahoo_direct import YahooDirect as _YahooDirect
+_yd = _YahooDirect(delay=0.08)
+
+# Monkey-patch: add yahoo_direct methods to yfinance Ticker for easy access
+def _yf_direct_info(self):
+    """Get info via YahooDirect fallback."""
+    info = _yd.get_info(self.ticker)
+    return info or {}
+
+def _yf_direct_history(self, period="1y"):
+    """Get history via YahooDirect fallback."""
+    return _yd.get_history(self.ticker, period=period)
+
+# Attach to yfinance Ticker
+if not hasattr(yf.Ticker, 'direct'):
+    yf.Ticker.direct = property(lambda self: self)
+    yf.Ticker.direct_info = _yf_direct_info
+    yf.Ticker.direct_history = _yf_direct_history
+    yf.YahooDirect = _YahooDirect
+    yf._yd_instance = _yd
 
 from vmaa.models import VMAACandidate, TradeDecision
 from vmaa.config import PC, P1C, P2C, RC as RiskCfg
