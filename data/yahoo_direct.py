@@ -96,20 +96,11 @@ class YahooDirect:
         }
 
     def _wait(self):
-        """Respect rate limits between calls. Handles 429 cooldown globally."""
-        global _LAST_CALL_TIME, _COOLDOWN_UNTIL, _CONSECUTIVE_429
+        """Respect rate limits between calls. Does NOT sleep for 429 cooldown
+        (that's handled by _yahoo_request and callers can fall through to Finnhub)."""
+        global _LAST_CALL_TIME
 
         now = time.time()
-
-        # Check if we're in a 429 cooldown period
-        if now < _COOLDOWN_UNTIL:
-            wait = _COOLDOWN_UNTIL - now
-            if wait > 1:
-                logger.debug(f"Yahoo 429 cooldown: sleeping {wait:.1f}s")
-            time.sleep(wait)
-            return
-
-        # Standard delay between calls
         elapsed = now - _LAST_CALL_TIME
         target = self.delay * (1.0 + random.uniform(-0.2, 0.2))
         if elapsed < target:
@@ -159,7 +150,7 @@ class YahooDirect:
                 _COOLDOWN_UNTIL = time.time() + cooldown
                 logger.debug(f"Yahoo 429 (x{_CONSECUTIVE_429}) — cooldown {cooldown:.1f}s")
                 self._ua_index += random.randint(1, 3)
-                time.sleep(max(0, cooldown - 2))  # Don't sleep full cooldown — callers will check
+                # Don't sleep here — return None immediately so caller falls through to Finnhub
                 return None
             elif r.status_code == 401:
                 logger.debug(f"Yahoo 401 on {url[:60]}")
