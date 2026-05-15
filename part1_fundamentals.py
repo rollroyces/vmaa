@@ -85,7 +85,33 @@ def screen_fundamentals(ticker: str, sector_medians: dict = None,
                 logger.debug(f"  {ticker}: yfinance failed ({yf_e})")
                 yf_ok = False
 
-        # If yfinance failed (rate-limited / empty info), use Finnhub/SEC fallback
+        # Fallback 1: YahooDirect (fast — bypasses yfinance 401 via Finnhub quote + profile2)
+        # Reset global Yahoo cooldown first so YahooDirect can try Finnhub
+        if not yf_ok or not info or not info.get('regularMarketPrice'):
+            try:
+                import data.yahoo_direct as _yd_mod
+                _yd_mod._COOLDOWN_UNTIL = 0
+                _yd_mod._CONSECUTIVE_429 = 0
+                from data.yahoo_direct import YahooDirect as _YD
+                yd = _YD(delay=0.02)  # minimal delay, Finnhub isn't rate-limited
+                yd_info = yd.get_info(ticker)
+                if yd_info and yd_info.get('currentPrice', 0) > 0:
+                    if not info:
+                        info = yd_info
+                    else:
+                        # Merge — existing yfinance values take priority
+                        for k, v in yd_info.items():
+                            if k not in info or not info.get(k):
+                                info[k] = v
+                    # Also get history from YahooDirect
+                    yd_hist = yd.get_history(ticker, period="1y")
+                    if yd_hist is not None and len(yd_hist) > 5:
+                        hist = yd_hist
+                    logger.debug(f"  {ticker}: Using YahooDirect fallback (price={info.get('currentPrice')}, sector={info.get('sector')}, hist={len(yd_hist) if yd_hist is not None else 0})")
+            except Exception as yd_e:
+                logger.debug(f"  {ticker}: YahooDirect fallback failed ({yd_e})")
+
+        # Fallback 2: Finnhub fundamentals (when both yfinance and YahooDirect failed)
         if not yf_ok or not info or not info.get('regularMarketPrice'):
             # Try Finnhub first (fast, comprehensive)
             from data.hybrid import get_finnhub_fundamentals, get_bars_hybrid, get_fundamentals_tiger, get_finnhub_recommendation

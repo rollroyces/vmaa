@@ -168,22 +168,8 @@ class YahooDirect:
     # ══════════════════════════════════════════════════════════════
 
     def get_price(self, ticker: str) -> Optional[float]:
-        """Get current price via Yahoo Chart API or Finnhub fallback."""
-        # Primary: Yahoo Chart API
-        data = self._yahoo_request(
-            f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
-            params={"interval": "1d", "range": "5d"}
-        )
-        if data:
-            try:
-                meta = data["chart"]["result"][0]["meta"]
-                price = meta.get("regularMarketPrice") or meta.get("previousClose", 0)
-                if price and float(price) > 0:
-                    return float(price)
-            except (KeyError, IndexError, ValueError):
-                pass
-
-        # Fallback: Finnhub quote (not rate-limited like Yahoo)
+        """Get current price — tries Finnhub first (not rate-limited), then Yahoo Chart."""
+        # Primary: Finnhub quote (NOT rate-limited like Yahoo, free tier 60 calls/min)
         try:
             self._rate_limit_finnhub()
             r = self._session.get(
@@ -197,6 +183,21 @@ class YahooDirect:
                     return close
         except Exception:
             pass
+
+        # Fallback: Yahoo Chart API (when Finnhub unavailable)
+        if not self._check_global_cooldown():
+            data = self._yahoo_request(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+                params={"interval": "1d", "range": "5d"}
+            )
+            if data:
+                try:
+                    meta = data["chart"]["result"][0]["meta"]
+                    price = meta.get("regularMarketPrice") or meta.get("previousClose", 0)
+                    if price and float(price) > 0:
+                        return float(price)
+                except (KeyError, IndexError, ValueError):
+                    pass
 
         return None
 
